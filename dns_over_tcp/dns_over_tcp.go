@@ -1,20 +1,13 @@
-package main
+package dns_over_tcp
 
 import (
-	"bufio"
 	"compress/gzip"
-	"encoding/binary"
 	"encoding/csv"
-	"errors"
 	"fmt"
-	"log"
-	"math"
 	"math/rand"
 	"net"
 	"os"
-	"os/signal"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -22,98 +15,23 @@ import (
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
 	"github.com/google/gopacket/pcapgo"
-	"github.com/ilyakaznacheev/cleanenv"
 
 	"golang.org/x/net/ipv4"
 
 	"github.com/breml/bpfutils"
 	"golang.org/x/time/rate"
+
+	"dns_tools/common"
+	"dns_tools/config"
+	"dns_tools/generator"
+	"dns_tools/logging"
 )
 
-const (
-	debug = true
-)
-
-// config
-type cfg_db struct {
-	Iface_name     string `yaml:"iface_name"`
-	Iface_ip       string `yaml:"iface_ip"`
-	Dst_port       uint16 `yaml:"dst_port"`
-	Dns_query      string `yaml:"dns_query"`
-	Excl_ips_fname string `yaml:"exclude_ips_fname"`
-	Pkts_per_sec   int    `yaml:"pkts_per_sec"`
-}
-
-var cfg cfg_db
-
-var wg sync.WaitGroup
 var raw_con *ipv4.RawConn
-
-type stop struct{}
-
-var stop_chan = make(chan stop) // (〃・ω・〃)
-var ip_chan = make(chan net.IP, 1024)
-
-var blocked_nets []*net.IPNet = []*net.IPNet{}
 
 var send_limiter *rate.Limiter
 
-// a simple struct for all the tcp flags needed
-type TCP_flags struct {
-	FIN, SYN, RST, PSH, ACK bool
-}
-
-func (flags TCP_flags) equals(tomatch TCP_flags) bool {
-	return flags.FIN == tomatch.FIN &&
-		flags.SYN == tomatch.SYN &&
-		flags.RST == tomatch.RST &&
-		flags.PSH == tomatch.PSH &&
-		flags.ACK == tomatch.ACK
-}
-
-func (flags TCP_flags) is_PSH_ACK() bool {
-	return flags.equals(TCP_flags{
-		FIN: false,
-		SYN: false,
-		RST: false,
-		PSH: true,
-		ACK: true,
-	})
-}
-
-func (flags TCP_flags) is_SYN_ACK() bool {
-	return flags.equals(TCP_flags{
-		FIN: false,
-		SYN: true,
-		RST: false,
-		PSH: false,
-		ACK: true,
-	})
-}
-
-func (flags TCP_flags) is_FIN_ACK() bool {
-	return flags.equals(TCP_flags{
-		FIN: true,
-		SYN: false,
-		RST: false,
-		PSH: false,
-		ACK: true,
-	})
-}
-
-func (flags TCP_flags) is_FIN_PSH_ACK() bool {
-	return flags.equals(TCP_flags{
-		FIN: true,
-		SYN: false,
-		RST: false,
-		PSH: true,
-		ACK: true,
-	})
-}
-
 var DNS_PAYLOAD_SIZE uint16
-
-var waiting_to_end = false
 
 /*	id:
 *	(seq-num)		(Ports from 61440)   	(2048 byte padding)
@@ -201,7 +119,7 @@ func scan_item_to_strarr(scan_item *scan_data_item) []string {
 }
 
 func write_results() {
-	defer wg.Done()
+	defer common.Wg.Done()
 	csvfile, err := os.Create("tcp_results.csv.gz")
 	if err != nil {
 		panic(err)
@@ -227,7 +145,7 @@ func write_results() {
 			scan_data.mu.Lock()
 			delete(scan_data.items, scan_item_key{root_item.port, root_item.seq})
 			scan_data.mu.Unlock()
-		case <-stop_chan:
+		case <-common.Stop_chan:
 			return
 		}
 	}
@@ -235,7 +153,7 @@ func write_results() {
 
 // periodically remove keys (=connections) that get no response from map
 func timeout() {
-	defer wg.Done()
+	defer common.Wg.Done()
 	for {
 		select {
 		case <-time.After(10 * time.Second):
@@ -248,7 +166,7 @@ func timeout() {
 				}
 			}
 			scan_data.mu.Unlock()
-		case <-stop_chan:
+		case <-common.Stop_chan:
 			return
 		}
 	}
@@ -287,7 +205,7 @@ func build_ack_with_dns(dst_ip net.IP, src_port layers.TCPPort, seq_num uint32, 
 	ip := layers.IPv4{
 		Version:  4,
 		TTL:      64,
-		SrcIP:    net.ParseIP(cfg.Iface_ip),
+		SrcIP:    net.ParseIP(config.Cfg.Iface_ip),
 		DstIP:    dst_ip,
 		Protocol: layers.IPProtocolTCP,
 		Id:       1,
@@ -296,7 +214,7 @@ func build_ack_with_dns(dst_ip net.IP, src_port layers.TCPPort, seq_num uint32, 
 	// Create tcp layer
 	tcp := layers.TCP{
 		SrcPort: src_port,
-		DstPort: layers.TCPPort(cfg.Dst_port),
+		DstPort: layers.TCPPort(config.Cfg.Dst_port),
 		ACK:     true,
 		PSH:     true,
 		Seq:     ack_num,
@@ -307,7 +225,7 @@ func build_ack_with_dns(dst_ip net.IP, src_port layers.TCPPort, seq_num uint32, 
 
 	// create dns layers
 	qst := layers.DNSQuestion{
-		Name:  []byte(cfg.Dns_query),
+		Name:  []byte(config.Cfg.Dns_query),
 		Type:  layers.DNSTypeA,
 		Class: layers.DNSClassIN,
 	}
@@ -342,7 +260,7 @@ func send_ack_pos_fin(dst_ip net.IP, src_port layers.TCPPort, seq_num uint32, ac
 	ip := layers.IPv4{
 		Version:  4,
 		TTL:      64,
-		SrcIP:    net.ParseIP(cfg.Iface_ip),
+		SrcIP:    net.ParseIP(config.Cfg.Iface_ip),
 		DstIP:    dst_ip,
 		Protocol: layers.IPProtocolTCP,
 		Id:       1,
@@ -351,7 +269,7 @@ func send_ack_pos_fin(dst_ip net.IP, src_port layers.TCPPort, seq_num uint32, ac
 	// Create tcp layer
 	tcp := layers.TCP{
 		SrcPort: src_port,
-		DstPort: layers.TCPPort(cfg.Dst_port),
+		DstPort: layers.TCPPort(config.Cfg.Dst_port),
 		ACK:     true,
 		FIN:     fin,
 		Seq:     ack_num,
@@ -390,9 +308,7 @@ func handle_pkt(pkt gopacket.Packet) {
 	if pkt.ApplicationLayer() == nil {
 		// SYN-ACK
 		if tcpflags.is_SYN_ACK() {
-			if debug {
-				log.Println("received SYN-ACK")
-			}
+			logging.Println(5, nil, "received SYN-ACK")
 			// check if item in map and assign value
 			scan_data.mu.Lock()
 			root_data_item, ok := scan_data.items[scan_item_key{tcp.DstPort, tcp.Ack - 1}]
@@ -425,9 +341,7 @@ func handle_pkt(pkt gopacket.Packet) {
 		} else
 		// FIN-ACK
 		if tcpflags.is_FIN_ACK() {
-			if debug {
-				log.Println("received FIN-ACK")
-			}
+			logging.Println(5, nil, "received FIN-ACK")
 			scan_data.mu.Lock()
 			root_data_item, ok := scan_data.items[scan_item_key{tcp.DstPort, tcp.Ack - 2 - uint32(DNS_PAYLOAD_SIZE)}]
 			scan_data.mu.Unlock()
@@ -437,24 +351,18 @@ func handle_pkt(pkt gopacket.Packet) {
 
 			last_data_item := root_data_item.last()
 			if !(last_data_item.flags.is_PSH_ACK()) {
-				if debug {
-					log.Println("missing PSH-ACK, dropping")
-				}
+				logging.Println(5, nil, "missing PSH-ACK, dropping")
 				send_ack_pos_fin(ip.SrcIP, tcp.DstPort, tcp.Seq, tcp.Ack, true)
 				return
 			}
-			if debug {
-				log.Println("ACKing FIN-ACK")
-			}
+			logging.Println(5, nil, "ACKing FIN-ACK")
 			send_ack_pos_fin(root_data_item.ip, tcp.DstPort, tcp.Seq, tcp.Ack, false)
 			write_chan <- root_data_item
 		}
 	} else
 	// PSH-ACK || FIN-PSH-ACK == DNS Response
 	if tcpflags.is_PSH_ACK() || tcpflags.is_FIN_PSH_ACK() {
-		if debug {
-			log.Println("received PSH-ACK or FIN-PSH-ACK")
-		}
+		logging.Println(5, nil, "received PSH-ACK or FIN-PSH-ACK")
 		// decode as DNS Packet
 		dns := &layers.DNS{}
 		// remove the first two bytes of the payload, i.e. size of the dns response
@@ -473,14 +381,10 @@ func handle_pkt(pkt gopacket.Packet) {
 		}
 		err := dns.DecodeFromBytes(pld, gopacket.NilDecodeFeedback)
 		if err != nil {
-			if debug {
-				log.Println("DNS not found")
-			}
+			logging.Println(5, nil, "DNS not found")
 			return
 		}
-		if debug {
-			log.Println("got DNS response")
-		}
+		logging.Println(4, nil, "got DNS response")
 		// check if item in map and assign value
 		scan_data.mu.Lock()
 		root_data_item, ok := scan_data.items[scan_item_key{tcp.DstPort, tcp.Ack - 1 - uint32(DNS_PAYLOAD_SIZE)}]
@@ -491,15 +395,11 @@ func handle_pkt(pkt gopacket.Packet) {
 		last_data_item := root_data_item.last()
 		// this should not occur, this would be the case if a psh-ack is being received more than once
 		if last_data_item.flags.is_PSH_ACK() {
-			if debug {
-				log.Println("already received PSH-ACK")
-			}
+			logging.Println(5, nil, "already received PSH-ACK")
 			return
 		}
 		if !(last_data_item.flags.is_SYN_ACK()) {
-			if debug {
-				log.Println("missing SYN-ACK")
-			}
+			logging.Println(5, nil, "missing SYN-ACK")
 			return
 		}
 		answers := dns.Answers
@@ -507,13 +407,9 @@ func handle_pkt(pkt gopacket.Packet) {
 		for _, answer := range answers {
 			if answer.IP != nil {
 				answers_ip = append(answers_ip, answer.IP)
-				if debug {
-					log.Println(answer.IP)
-				}
+				logging.Println(6, nil, answer.IP)
 			} else {
-				if debug {
-					log.Println("non IP type found in answer")
-				}
+				logging.Println(5, nil, "non IP type found in answer")
 				return
 			}
 		}
@@ -545,20 +441,16 @@ func handle_pkt(pkt gopacket.Packet) {
 }
 
 func packet_capture(handle *pcapgo.EthernetHandle) {
-	defer wg.Done()
-	if debug {
-		log.Println("starting packet capture")
-	}
+	defer common.Wg.Done()
+	logging.Println(3, nil, "starting packet capture")
 	pkt_src := gopacket.NewPacketSource(
 		handle, layers.LinkTypeEthernet).Packets()
 	for {
 		select {
 		case pkt := <-pkt_src:
 			go handle_pkt(pkt)
-		case <-stop_chan:
-			if debug {
-				log.Println("stopping packet capture")
-			}
+		case <-common.Stop_chan:
+			logging.Println(3, nil, "stopping packet capture")
 			return
 		}
 	}
@@ -568,9 +460,7 @@ func send_syn(id uint32, dst_ip net.IP) {
 	// generate sequence number based on the first 21 bits of the hash
 	seq := (id & 0x1FFFFF) * 2048
 	port := layers.TCPPort(((id & 0xFFE00000) >> 21) + 61440)
-	if debug {
-		log.Println(dst_ip, "seq_num=", seq)
-	}
+	logging.Println(6, nil, dst_ip, "seq_num=", seq)
 	// check for sequence number collisions
 	scan_data.mu.Lock()
 	s_d_item := scan_data_item{
@@ -590,9 +480,7 @@ func send_syn(id uint32, dst_ip net.IP) {
 		dns_recs: nil,
 		Next:     nil,
 	}
-	if debug {
-		log.Println("scan_data=", s_d_item)
-	}
+	logging.Println(6, nil, "scan_data=", s_d_item)
 	scan_data.items[scan_item_key{port, seq}] = &s_d_item
 	scan_data.mu.Unlock()
 
@@ -601,7 +489,7 @@ func send_syn(id uint32, dst_ip net.IP) {
 	ip := layers.IPv4{
 		Version:  4,
 		TTL:      64,
-		SrcIP:    net.ParseIP(cfg.Iface_ip),
+		SrcIP:    net.ParseIP(config.Cfg.Iface_ip),
 		DstIP:    dst_ip,
 		Protocol: layers.IPProtocolTCP,
 		Id:       1,
@@ -638,293 +526,80 @@ func get_next_id() uint32 {
 }
 
 func init_tcp() {
-	defer wg.Done()
+	defer common.Wg.Done()
 	for {
 		select {
-		case dst_ip := <-ip_chan:
+		case dst_ip := <-common.Ip_chan:
 			// check if ip is excluded in the blocklist
 			should_exclude := false
-			for _, blocked_net := range blocked_nets {
+			for _, blocked_net := range common.Blocked_nets {
 				if blocked_net.Contains(dst_ip) {
 					should_exclude = true
 					break
 				}
 			}
 			if should_exclude {
-				if debug {
-					log.Println("excluding ip:", dst_ip)
-				}
+				logging.Println(3, nil, "excluding ip:", dst_ip)
 				continue
 			}
 			id := get_next_id()
-			if debug {
-				log.Println("ip:", dst_ip, id)
-			}
+			logging.Println(6, nil, "ip:", dst_ip, id)
 			r := send_limiter.Reserve()
 			if !r.OK() {
-				log.Println("Rate limit exceeded")
+				logging.Println(4, nil, "Rate limit exceeded")
 			}
 			time.Sleep(r.Delay())
 			send_syn(id, dst_ip)
-		case <-stop_chan:
+		case <-common.Stop_chan:
 			return
 		}
 	}
-}
-
-func read_ips_file(fname string) {
-	defer wg.Done()
-	file, err := os.Open(fname)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			continue
-		}
-		ip_chan <- net.ParseIP(line)
-	}
-
-	if err := scanner.Err(); err != nil {
-		log.Fatal(err)
-	}
-	// wait some time to send out SYNs & handle the responses
-	// of the IPs just read before ending the program
-	if debug {
-		log.Println("read all ips, waiting to end ...")
-	}
-	waiting_to_end = true
-	time.Sleep(10 * time.Second)
-	close(stop_chan)
 }
 
 func close_handle(handle *pcapgo.EthernetHandle) {
-	defer wg.Done()
-	<-stop_chan
-	if debug {
-		log.Println("closing handle")
-	}
+	defer common.Wg.Done()
+	<-common.Stop_chan
+	logging.Println(3, nil, "closing handle")
 	handle.Close()
-	if debug {
-		log.Println("handle closed")
-	}
+	logging.Println(3, nil, "handle closed")
 }
 
-func load_config() {
-	err := cleanenv.ReadConfig("config.yml", &cfg)
-	if err != nil {
-		panic(err)
-	}
-	if debug {
-		log.Println("config:", cfg)
-	}
-}
-
-func write_to_log(msg string) {
-	logfile, err := os.OpenFile("run.log", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
-	if err != nil {
-		panic(err)
-	}
-	defer logfile.Close()
-	logfile.WriteString(msg + "\n")
-}
-
-// Linear Congruential Generator
-// as described in https://stackoverflow.com/a/53551417
-type lcg_state struct {
-	value      int
-	offset     int
-	multiplier int
-	modulus    int
-	max        int
-	found      int
-}
-
-var lcg_ipv4 lcg_state
-
-func (lcg *lcg_state) init(stop int) {
-	// Seed range with a random integer.
-	lcg.value = rand.Intn(stop)
-	lcg.offset = rand.Intn(stop)*2 + 1                                  // Pick a random odd-valued offset.
-	lcg.multiplier = 4*(int(stop/4)) + 1                                // Pick a multiplier 1 greater than a multiple of 4
-	lcg.modulus = int(math.Pow(2, math.Ceil(math.Log2(float64(stop))))) // Pick a modulus just big enough to generate all numbers (power of 2)
-	lcg.found = 0                                                       // Track how many random numbers have been returned
-	lcg.max = stop
-}
-
-func (lcg *lcg_state) next() int {
-	for lcg.value >= lcg.max {
-		lcg.value = (lcg.value*lcg.multiplier + lcg.offset) % lcg.modulus
-	}
-	lcg.found += 1
-	value := lcg.value
-	// Calculate the next value in the sequence.
-	lcg.value = (lcg.value*lcg.multiplier + lcg.offset) % lcg.modulus
-	return value
-}
-
-func (lcg *lcg_state) has_next() bool {
-	return lcg.found < lcg.max
-}
-
-func ip42uint32(ip net.IP) uint32 {
-	return binary.BigEndian.Uint32(ip.To4())
-}
-
-func uint322ip(ipint uint32) net.IP {
-	ip := make(net.IP, 4)
-	binary.BigEndian.PutUint32(ip, ipint)
-	return ip
-}
-
-func gen_ips(netip net.IP, hostsize int) {
-	defer wg.Done()
-	netip_int := ip42uint32(netip)
-	lcg_ipv4.init(int(math.Pow(2, float64(hostsize))))
-	for lcg_ipv4.has_next() {
-		select {
-		case <-stop_chan:
-			return
-		default:
-			val := lcg_ipv4.next()
-			ip_chan <- uint322ip(netip_int + uint32(val))
-		}
-	}
-	// wait some time to send out SYNs & handle the responses
-	// of the IPs just read before ending the program
-	if debug {
-		log.Println("all ips generated, waiting to end ...")
-	}
-	waiting_to_end = true
-	time.Sleep(10 * time.Second)
-	close(stop_chan)
-}
-
-func exclude_ips() {
-	if _, err := os.Stat(cfg.Excl_ips_fname); errors.Is(err, os.ErrNotExist) {
-		if debug {
-			log.Println("ip exclusion list not found, skipping")
-			log.Println("exclusion list filename was read as:", cfg.Excl_ips_fname)
-		}
-		return
-	}
-	file, err := os.Open(cfg.Excl_ips_fname)
-	if err != nil {
-		panic(err)
-	}
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			continue
-		}
-		comment_pos := strings.IndexByte(line, '#')
-		if comment_pos == -1 {
-			comment_pos = len(line)
-		}
-		pos_net := line[:comment_pos]
-		pos_net = strings.TrimSpace(pos_net)
-		if pos_net == "" {
-			continue
-		}
-		_, new_net, err := net.ParseCIDR(pos_net)
-		if err != nil { // if there are errors try if the string maybe is a single ip
-			toblock_ip := net.ParseIP(pos_net)
-			if toblock_ip == nil {
-				log.Println("could not interpret line, skipping")
-				continue
-			}
-			mask := net.CIDRMask(32, 32) // 32 bits for IPv4
-			new_net = &net.IPNet{IP: toblock_ip, Mask: mask}
-		}
-
-		blocked_nets = append(blocked_nets, new_net)
-		if debug {
-			log.Println("added blocked net:", new_net.String())
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		panic(err)
-	}
-}
-
-func main() {
+func Start_scan(config_path string, args []string) {
 	// before running the script run below iptables command so that kernel doesn't send out RSTs
 	// sudo iptables -C OUTPUT -p tcp --tcp-flags RST RST -j DROP > /dev/null || sudo iptables -A OUTPUT -p tcp --tcp-flags RST RST -j DROP
 
 	// write start ts to log
-	write_to_log("START " + time.Now().UTC().String())
+	logging.Write_to_runlog("START " + time.Now().UTC().String())
 	// command line args
-	if len(os.Args) < 1 {
-		write_to_log("END " + time.Now().UTC().String() + " arg not given")
-		if debug {
-			log.Println("ERR need filename or net in CIDR notation")
-		}
+	if len(args) < 1 {
+		logging.Write_to_runlog("END " + time.Now().UTC().String() + " arg not given")
+		logging.Println(1, nil, "ERR need filename or net in CIDR notation")
 		return
 	}
-	ip_or_file_split := strings.Split(os.Args[1], "/")
 	var fname string
 	var netip net.IP
 	var hostsize int
-	if len(ip_or_file_split) == 1 {
-		// using filename
-		fname = ip_or_file_split[0]
-	} else if len(ip_or_file_split) == 2 {
-		// using CIDR net
-		netip = net.ParseIP(ip_or_file_split[0])
-		var err error
-		hostsize, err = strconv.Atoi(ip_or_file_split[1])
-		if err != nil {
-			panic(err)
-		}
-		hostsize = 32 - hostsize
-	} else {
-		write_to_log("END " + time.Now().UTC().String() + " wrongly formatted input arg")
-		if debug {
-			log.Println("ERR check your input arg (filename or CIDR notation)")
-		}
-	}
+	fname, netip, hostsize = common.Get_cidr_filename(args[0])
 
-	// handle ctrl+c SIGINT
-	go func() {
-		interrupt_chan := make(chan os.Signal, 1)
-		signal.Notify(interrupt_chan, os.Interrupt)
-		<-interrupt_chan
-		if waiting_to_end {
-			if debug {
-				log.Println("already ending")
-			}
-		} else {
-			if debug {
-				log.Println("received SIGINT, ending")
-			}
-			close(stop_chan)
-		}
-	}()
+	go common.Handle_ctrl_c()
 
-	load_config()
-	exclude_ips()
-	send_limiter = rate.NewLimiter(rate.Every(time.Duration(1000000/cfg.Pkts_per_sec)*time.Microsecond), 1)
+	common.Exclude_ips()
+	send_limiter = rate.NewLimiter(rate.Every(time.Duration(1000000/config.Cfg.Pkts_per_sec)*time.Microsecond), 1)
 	// set the DNS_PAYLOAD_SIZE once as it is static
 	_, _, dns_payload := build_ack_with_dns(net.ParseIP("0.0.0.0"), 0, 0, 0)
 	DNS_PAYLOAD_SIZE = uint16(len(dns_payload))
 	// start packet capture
-	handle, err := pcapgo.NewEthernetHandle(cfg.Iface_name)
+	handle, err := pcapgo.NewEthernetHandle(config.Cfg.Iface_name)
 	if err != nil {
 		panic(err)
 	}
 	defer handle.Close()
 
-	iface, err := net.InterfaceByName(cfg.Iface_name)
+	iface, err := net.InterfaceByName(config.Cfg.Iface_name)
 	if err != nil {
 		panic(err)
 	}
-	bpf_instr, err := pcap.CompileBPFFilter(layers.LinkTypeEthernet, iface.MTU, fmt.Sprint("tcp and ip dst ", cfg.Iface_ip, " and src port 53"))
+	bpf_instr, err := pcap.CompileBPFFilter(layers.LinkTypeEthernet, iface.MTU, fmt.Sprint("tcp and ip dst ", config.Cfg.Iface_ip, " and src port 53"))
 	if err != nil {
 		panic(err)
 	}
@@ -934,7 +609,7 @@ func main() {
 	}
 	// create raw l3 socket
 	var pkt_con net.PacketConn
-	pkt_con, err = net.ListenPacket("ip4:tcp", cfg.Iface_ip)
+	pkt_con, err = net.ListenPacket("ip4:tcp", config.Cfg.Iface_ip)
 	if err != nil {
 		panic(err)
 	}
@@ -944,32 +619,24 @@ func main() {
 	}
 
 	// start packet capture as goroutine
-	wg.Add(5)
+	common.Wg.Add(5)
 	go packet_capture(handle)
 	go write_results()
 	go timeout()
 	if fname != "" {
-		if debug {
-			log.Println("running in filename mode")
-		}
-		go read_ips_file(fname)
+		logging.Println(3, nil, "running in filename mode")
+		go common.Read_ips_file(fname)
 	} else {
-		if debug {
-			log.Println("running in CIDR mode")
-		}
-		go gen_ips(netip, hostsize)
+		logging.Println(3, nil, "running in CIDR mode")
+		go generator.Gen_ips(netip, hostsize)
 	}
 	for i := 0; i < 8; i++ {
-		wg.Add(1)
+		common.Wg.Add(1)
 		go init_tcp()
 	}
 	go close_handle(handle)
-	wg.Wait()
-	if debug {
-		log.Println("all routines finished")
-	}
-	write_to_log("END " + time.Now().UTC().String())
-	if debug {
-		log.Println("program done")
-	}
+	common.Wg.Wait()
+	logging.Println(3, nil, "all routines finished")
+	logging.Write_to_runlog("[TCP SCAN] END " + time.Now().UTC().String())
+	logging.Println(3, nil, "program done")
 }

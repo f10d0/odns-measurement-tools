@@ -30,10 +30,6 @@ import (
 	"golang.org/x/time/rate"
 )
 
-const (
-	debug = false
-)
-
 // config
 type cfg_db struct {
 	Iface_name     string `yaml:"iface_name"`
@@ -44,6 +40,7 @@ type cfg_db struct {
 	Dns_query      string `yaml:"dns_query"`
 	Excl_ips_fname string `yaml:"exclude_ips_fname"`
 	Pkts_per_sec   int    `yaml:"pkts_per_sec"`
+	Debug          bool   `yaml:"debug" env-default:"false"`
 }
 
 var cfg cfg_db
@@ -234,7 +231,7 @@ func build_dns(dst_ip net.IP, src_port layers.UDPPort, dnsid uint16) (layers.IPv
 
 func send_dns(id uint32, dst_ip net.IP, src_port layers.UDPPort, dnsid uint16) {
 	// generate sequence number based on the first 21 bits of the hash
-	if debug {
+	if cfg.Debug {
 		log.Println(dst_ip, "port=", src_port, "dnsid=", dnsid)
 	}
 	// check for sequence number collisions
@@ -247,7 +244,7 @@ func send_dns(id uint32, dst_ip net.IP, src_port layers.UDPPort, dnsid uint16) {
 		dns_recs: nil,
 		dnsid:    dnsid,
 	}
-	if debug {
+	if cfg.Debug {
 		log.Println("scan_data=", s_d_item)
 	}
 	scan_data.items[scan_item_key{src_port, dnsid}] = &s_d_item
@@ -276,7 +273,7 @@ func handle_pkt(pkt gopacket.Packet) {
 	}
 	// pkts w/o content will be dropped
 	if pkt.ApplicationLayer() != nil {
-		if debug {
+		if cfg.Debug {
 			log.Println("received data")
 		}
 		// decode as DNS Packet
@@ -284,12 +281,12 @@ func handle_pkt(pkt gopacket.Packet) {
 		pld := udp.LayerPayload()
 		err := dns.DecodeFromBytes(pld, gopacket.NilDecodeFeedback)
 		if err != nil {
-			if debug {
+			if cfg.Debug {
 				log.Println("DNS not found")
 			}
 			return
 		}
-		if debug {
+		if cfg.Debug {
 			log.Println("got DNS response")
 		}
 		// check if item in map and assign value
@@ -304,11 +301,11 @@ func handle_pkt(pkt gopacket.Packet) {
 		for _, answer := range answers {
 			if answer.IP != nil {
 				answers_ip = append(answers_ip, answer.IP)
-				if debug {
+				if cfg.Debug {
 					log.Println(answer.IP)
 				}
 			} else {
-				if debug {
+				if cfg.Debug {
 					log.Println("non IP type found in answer")
 				}
 				//return
@@ -323,7 +320,7 @@ func handle_pkt(pkt gopacket.Packet) {
 
 func packet_capture(handle *pcapgo.EthernetHandle) {
 	defer wg.Done()
-	if debug {
+	if cfg.Debug {
 		log.Println("starting packet capture")
 	}
 	pkt_src := gopacket.NewPacketSource(
@@ -333,7 +330,7 @@ func packet_capture(handle *pcapgo.EthernetHandle) {
 		case pkt := <-pkt_src:
 			go handle_pkt(pkt)
 		case <-stop_chan:
-			if debug {
+			if cfg.Debug {
 				log.Println("stopping packet capture")
 			}
 			return
@@ -388,13 +385,13 @@ func init_udp(port_min uint16, port_max uint16) {
 				}
 			}
 			if should_exclude {
-				if debug {
+				if cfg.Debug {
 					log.Println("excluding ip:", dst_ip)
 				}
 				continue
 			}
 			id, src_port, dns_id := update_sync_init()
-			if debug {
+			if cfg.Debug {
 				log.Println("ip:", dst_ip, "id=", id, "port=", src_port, "dns_id=", dns_id)
 			}
 			r := send_limiter.Reserve()
@@ -434,7 +431,7 @@ func read_ips_file(fname string) {
 	}
 	// wait some time to send out SYNs & handle the responses
 	// of the IPs just read before ending the program
-	if debug {
+	if cfg.Debug {
 		log.Println("read all ips, waiting to end ...")
 	}
 	waiting_to_end = true
@@ -445,11 +442,11 @@ func read_ips_file(fname string) {
 func close_handle(handle *pcapgo.EthernetHandle) {
 	defer wg.Done()
 	<-stop_chan
-	if debug {
+	if cfg.Debug {
 		log.Println("closing handle")
 	}
 	handle.Close()
-	if debug {
+	if cfg.Debug {
 		log.Println("handle closed")
 	}
 }
@@ -459,7 +456,7 @@ func load_config() {
 	if err != nil {
 		panic(err)
 	}
-	if debug {
+	if cfg.Debug {
 		log.Println("config:", cfg)
 	}
 }
@@ -536,7 +533,7 @@ func gen_ips(netip net.IP, hostsize int) {
 	}
 	// wait some time to send out SYNs & handle the responses
 	// of the IPs just generated before ending the program
-	if debug {
+	if cfg.Debug {
 		log.Println("all ips generated, waiting to end ...")
 	}
 	waiting_to_end = true
@@ -546,7 +543,7 @@ func gen_ips(netip net.IP, hostsize int) {
 
 func exclude_ips() {
 	if _, err := os.Stat(cfg.Excl_ips_fname); errors.Is(err, os.ErrNotExist) {
-		if debug {
+		if cfg.Debug {
 			log.Println("ip exclusion list not found, skipping")
 			log.Println("exclusion list filename was read as:", cfg.Excl_ips_fname)
 		}
@@ -583,7 +580,7 @@ func exclude_ips() {
 		}
 
 		blocked_nets = append(blocked_nets, new_net)
-		if debug {
+		if cfg.Debug {
 			log.Println("added blocked net:", new_net.String())
 		}
 	}
@@ -597,7 +594,7 @@ func exclude_ips() {
 // so no icmp port unreachable is sent and no other application
 // may use these ports by chance
 func bind_ports() {
-	if debug {
+	if cfg.Debug {
 		log.Println("Binding ports")
 	}
 	var port uint32
@@ -607,7 +604,7 @@ func bind_ports() {
 			Port: (int)(port),
 		})
 		if err != nil {
-			if debug {
+			if cfg.Debug {
 				log.Println("Could not bind to UDP port", port)
 				log.Println("reason:", err)
 			}
@@ -619,7 +616,7 @@ func bind_ports() {
 }
 
 func unbind_ports() {
-	if debug {
+	if cfg.Debug {
 		log.Println("Unbinding ports")
 	}
 	for _, sock := range bound_sockets {
@@ -636,7 +633,7 @@ func main() {
 	// command line args
 	if len(os.Args) < 2 {
 		write_to_log("END " + time.Now().UTC().String() + " arg not given")
-		if debug {
+		if cfg.Debug {
 			log.Println("ERR need filename or net in CIDR notation")
 		}
 		return
@@ -656,7 +653,7 @@ func main() {
 		hostsize = 32 - ones
 	} else {
 		write_to_log("END " + time.Now().UTC().String() + " wrongly formatted input arg")
-		if debug {
+		if cfg.Debug {
 			log.Println("ERR check your input arg (filename or CIDR notation)")
 			return
 		}
@@ -668,12 +665,12 @@ func main() {
 		signal.Notify(interrupt_chan, os.Interrupt)
 		<-interrupt_chan
 		if waiting_to_end {
-			if debug {
+			if cfg.Debug {
 				log.Println("already ending")
 			}
 		} else {
 			waiting_to_end = true
-			if debug {
+			if cfg.Debug {
 				log.Println("received SIGINT, ending")
 			}
 			close(stop_chan)
@@ -723,12 +720,12 @@ func main() {
 	go write_results()
 	go timeout()
 	if fname != "" {
-		if debug {
+		if cfg.Debug {
 			log.Println("running in filename mode, this will not be randomized, the ips are probed as listed in the file")
 		}
 		go read_ips_file(fname)
 	} else {
-		if debug {
+		if cfg.Debug {
 			log.Println("running in CIDR mode")
 		}
 		go gen_ips(netip, hostsize)
@@ -740,11 +737,11 @@ func main() {
 	go close_handle(handle)
 	wg.Wait()
 	unbind_ports()
-	if debug {
+	if cfg.Debug {
 		log.Println("all routines finished")
 	}
 	write_to_log("END " + time.Now().UTC().String())
-	if debug {
+	if cfg.Debug {
 		log.Println("program done")
 	}
 }
