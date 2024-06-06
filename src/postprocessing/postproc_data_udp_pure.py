@@ -19,6 +19,7 @@ from natsort import natsorted
 # increasing this value will match file 1 with more than 1 other file 
 NO_OF_FILES = 2
 REFERENCE_QUERY_NAME = 'rr-mirror.research.nawrocki.berlin'
+REFERENCE_IP = "91.216.216.216"
 THREAD_COUNT = 15
 ################
 
@@ -80,9 +81,9 @@ def process_go_results(load_fname: str):
                     continue
                 arecs = split[GoPos.AREC_IP.value].split(',')
                 # there should be two entries, one of them the control ip
-                if len(arecs) != 2 or "91.216.216.216" not in arecs:
+                if len(arecs) != 2 or REFERENCE_IP not in arecs:
                     continue
-                arecord = ip_address(arecs[0] if arecs[1]=="91.216.216.216" else arecs[1])
+                arecord = ip_address(arecs[0] if arecs[1]==REFERENCE_IP else arecs[1])
                 outitem = OutputItem(
                     ip_address(split[GoPos.TARGET_IP.value]),
                     ip_address(split[GoPos.RESP_IP.value]),
@@ -108,9 +109,9 @@ class WorkerProcess(Process):
             return
         arecs = csv_split[InPos.RECS.value].split(',')
         # there should be two entries, one of them the control ip
-        if len(arecs) != 2 or "91.216.216.216" not in arecs:
+        if len(arecs) != 2 or REFERENCE_IP not in arecs:
             return
-        arecord = ip_address(arecs[0] if arecs[1]=="91.216.216.216" else arecs[1])
+        arecord = ip_address(arecs[0] if arecs[1]==REFERENCE_IP else arecs[1])
         outitem = output_df[(csv_split[InPos.ID.value],int(csv_split[InPos.DP.value]))]
         outitem.response_ip = ip_address(csv_split[InPos.SIP.value])
         outitem.arecord = arecord

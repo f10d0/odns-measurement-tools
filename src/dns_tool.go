@@ -72,7 +72,7 @@ func main() {
 				tcp_scanner.Start_scan(*config_path, flag.Args())
 			case "udp":
 				fmt.Println("starting udp scan")
-				logging.Runlog_prefix = "TCP-SCAN"
+				logging.Runlog_prefix = "UDP-SCAN"
 				var udp_scanner udpscanner.Udp_scanner
 				udp_scanner.Start_scan(*config_path, flag.Args())
 			default:
