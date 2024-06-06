@@ -1,4 +1,4 @@
-package dns_over_tcp
+package tcpscanner
 
 // a simple struct for all the tcp flags needed
 type TCP_flags struct {

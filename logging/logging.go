@@ -16,17 +16,19 @@ func Println(lvl int, prefix interface{}, v ...any) {
 		u := []any{}
 		switch lvl {
 		case 1:
-			u = append(u, "ERR  ")
+			u = append(u, "ERR    ")
 		case 2:
-			u = append(u, "WARN ")
+			u = append(u, "WARN   ")
 		case 3:
-			u = append(u, "INFO ")
+			u = append(u, "INFO   ")
 		case 4:
-			u = append(u, "DEBUG")
+			u = append(u, "DEBUG  ")
 		case 5:
 			u = append(u, "VERBOSE")
 		case 6:
-			u = append(u, "ALL")
+			u = append(u, "ALL    ")
+		default:
+			u = append(u, "       ")
 		}
 		if prefix != nil && prefix != "" {
 			u = append(u, "["+fmt.Sprintf("%v", prefix)+"]")

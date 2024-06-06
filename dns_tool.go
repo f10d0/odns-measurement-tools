@@ -3,8 +3,9 @@ package main
 import (
 	"dns_tools/common"
 	"dns_tools/config"
-	"dns_tools/dns_over_tcp"
 	"dns_tools/logging"
+	tcpscanner "dns_tools/scanner/tcp"
+	udpscanner "dns_tools/scanner/udp"
 	"flag"
 	"fmt"
 	"os"
@@ -67,9 +68,13 @@ func main() {
 			case "tcp":
 				fmt.Println("starting tcp scan")
 				logging.Runlog_prefix = "TCP-SCAN"
-				dns_over_tcp.Start_scan(*config_path, flag.Args())
+				var tcp_scanner tcpscanner.Tcp_scanner
+				tcp_scanner.Start_scan(*config_path, flag.Args())
 			case "udp":
 				fmt.Println("starting udp scan")
+				logging.Runlog_prefix = "TCP-SCAN"
+				var udp_scanner udpscanner.Udp_scanner
+				udp_scanner.Start_scan(*config_path, flag.Args())
 			default:
 				fmt.Println("wrong protocol")
 				os.Exit(int(common.WRONG_INPUT_ARGS))

@@ -1,13 +1,10 @@
 package generator
 
 import (
-	"dns_tools/common"
-	"dns_tools/logging"
 	"encoding/binary"
 	"math"
 	"math/rand"
 	"net"
-	"time"
 )
 
 // Linear Congruential Generator
@@ -21,9 +18,11 @@ type lcg_state struct {
 	found      int
 }
 
-var lcg_ipv4 lcg_state
+type Lcg struct {
+	lcg_state
+}
 
-func (lcg *lcg_state) init(stop int) {
+func (lcg *Lcg) Init(stop int) {
 	// Seed range with a random integer.
 	lcg.value = rand.Intn(stop)
 	lcg.offset = rand.Intn(stop)*2 + 1                                  // Pick a random odd-valued offset.
@@ -33,7 +32,7 @@ func (lcg *lcg_state) init(stop int) {
 	lcg.max = stop
 }
 
-func (lcg *lcg_state) next() int {
+func (lcg *Lcg) Next() int {
 	for lcg.value >= lcg.max {
 		lcg.value = (lcg.value*lcg.multiplier + lcg.offset) % lcg.modulus
 	}
@@ -44,37 +43,16 @@ func (lcg *lcg_state) next() int {
 	return value
 }
 
-func (lcg *lcg_state) has_next() bool {
+func (lcg *Lcg) Has_next() bool {
 	return lcg.found < lcg.max
 }
 
-func ip42uint32(ip net.IP) uint32 {
+func Ip42uint32(ip net.IP) uint32 {
 	return binary.BigEndian.Uint32(ip.To4())
 }
 
-func uint322ip(ipint uint32) net.IP {
+func Uint322ip(ipint uint32) net.IP {
 	ip := make(net.IP, 4)
 	binary.BigEndian.PutUint32(ip, ipint)
 	return ip
-}
-
-func Gen_ips(netip net.IP, hostsize int) {
-	defer common.Wg.Done()
-	netip_int := ip42uint32(netip)
-	lcg_ipv4.init(int(math.Pow(2, float64(hostsize))))
-	for lcg_ipv4.has_next() {
-		select {
-		case <-common.Stop_chan:
-			return
-		default:
-			val := lcg_ipv4.next()
-			common.Ip_chan <- uint322ip(netip_int + uint32(val))
-		}
-	}
-	// wait some time to send out SYNs & handle the responses
-	// of the IPs just read before ending the program
-	logging.Println(3, "all ips generated, waiting to end ...")
-	common.Waiting_to_end = true
-	time.Sleep(10 * time.Second)
-	close(common.Stop_chan)
 }
