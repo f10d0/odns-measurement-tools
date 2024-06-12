@@ -161,7 +161,7 @@ func (tcpt *Tcp_traceroute) Handle_pkt(pkt gopacket.Packet) {
 	}
 	icmp_layer := pkt.Layer(layers.LayerTypeICMPv4)
 	icmp, _ := icmp_layer.(*layers.ICMPv4)
-	if icmp != nil {
+	if icmp != nil && icmp.TypeCode == layers.ICMPv4TypeTimeExceeded {
 		logging.Println(5, "", "received ICMP packet")
 		//icmpPacket, _ := icmp_layer.(*layers.ICMPv4)
 
@@ -188,6 +188,11 @@ func (tcpt *Tcp_traceroute) Handle_pkt(pkt gopacket.Packet) {
 		}
 
 		inner_ip, _ := ip_layer.(*layers.IPv4)
+		// icmp has no correct IP header payload
+		if len(inner_ip.Payload) < 20 {
+			logging.Println(6, "ICMP-Payload ERR", pkt)
+			return
+		}
 		// Decode source port (first 2 bytes)
 		source_port := layers.TCPPort(binary.BigEndian.Uint16(inner_ip.Payload[:2]))
 		start_port := tcpt.calc_start_port(uint16(source_port))
@@ -531,6 +536,11 @@ func (tcpt *Tcp_traceroute) init_traceroute(start_port uint16) {
 					logging.Println(6, tcpt.id_from_port(start_port), "written & no further ips found in channel")
 				}
 				tcpt.init_finished[tcpt.id_from_port(start_port)] = true
+			} else if !ok && tcpt.Waiting_to_end {
+				if !tcpt.init_finished[tcpt.id_from_port(start_port)] {
+					logging.Println(6, tcpt.id_from_port(start_port), "routine never used")
+				}
+				tcpt.init_finished[tcpt.id_from_port(start_port)] = true
 			}
 		case <-tcpt.Stop_chan:
 			return
@@ -622,7 +632,6 @@ func (tcpt *Tcp_traceroute) read_ips_file(fname string) {
 	logging.Println(3, "READ-IPS", "read all ips")
 	tcpt.Waiting_to_end = true
 	for !tcpt.init_is_finished() {
-		// TODO for some reason this wont end
 		logging.Println(6, "READ-IPS", "waiting to end")
 		time.Sleep(2 * time.Second)
 	}
