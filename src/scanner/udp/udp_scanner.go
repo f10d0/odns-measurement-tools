@@ -26,7 +26,6 @@ import (
 
 type Udp_scanner struct {
 	scanner.Base_scanner
-	DNS_PAYLOAD_SIZE uint16
 	// slice for sockets that will be bound on program start
 	bound_sockets []*net.UDPConn
 	ip_loop_id    synced_init
@@ -337,9 +336,10 @@ func (udps *Udp_scanner) unbind_ports() {
 	}
 }
 
-func (udps *Udp_scanner) Start_scan(config_path string, args []string) {
-	udps.Init()
+func (udps *Udp_scanner) Start_scan(args []string) {
+	udps.Scanner_init()
 	udps.Scanner_methods = udps
+	udps.Base_methods = udps
 	udps.bound_sockets = []*net.UDPConn{}
 	// synced between multiple init_udp()
 	udps.ip_loop_id = synced_init{

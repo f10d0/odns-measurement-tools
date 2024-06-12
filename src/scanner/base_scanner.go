@@ -11,7 +11,6 @@ import (
 	"log"
 	"net"
 	"os"
-	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,15 +19,12 @@ import (
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcapgo"
-	"golang.org/x/net/ipv4"
-	"golang.org/x/time/rate"
 )
-
-type stop struct{}
 
 type Scan_data_item interface {
 	Get_timestamp() time.Time
 }
+
 type scan_item_key interface{}
 
 // map to track tcp connections, key is a tuple of (port, seq)
@@ -37,35 +33,26 @@ type root_scan_data struct {
 	Items map[scan_item_key]Scan_data_item
 }
 
-type Methods interface {
+type IScanner_Methods interface {
 	Write_item(scan_item Scan_data_item)
 	Handle_pkt(pkt gopacket.Packet)
 }
 
 type Base_scanner struct {
-	Stop_chan       chan stop
-	Wg              sync.WaitGroup
-	Ip_chan         chan net.IP
-	Waiting_to_end  bool
+	common.Scanner_traceroute
 	Blocked_nets    []*net.IPNet
 	Write_chan      chan Scan_data_item
 	Scan_data       root_scan_data
-	Writer          *csv.Writer
-	Scanner_methods Methods
-	Send_limiter    *rate.Limiter
-	Raw_con         *ipv4.RawConn
+	Scanner_methods IScanner_Methods
 }
 
-func (bs *Base_scanner) Init() {
+func (bs *Base_scanner) Scanner_init() {
+	bs.Base_init()
 	bs.Blocked_nets = []*net.IPNet{}
-	bs.Stop_chan = make(chan stop) // (〃・ω・〃)
-	bs.Ip_chan = make(chan net.IP, 1024)
-	bs.Waiting_to_end = false
 	bs.Write_chan = make(chan Scan_data_item, 4096)
 	bs.Scan_data = root_scan_data{
 		Items: make(map[scan_item_key]Scan_data_item),
 	}
-	bs.Send_limiter = rate.NewLimiter(rate.Every(time.Duration(1000000/config.Cfg.Pkts_per_sec)*time.Microsecond), 1)
 
 	go bs.Handle_ctrl_c()
 	bs.Exclude_ips()
@@ -73,7 +60,7 @@ func (bs *Base_scanner) Init() {
 
 func (bs *Base_scanner) Write_results(out_path string) {
 	defer bs.Wg.Done()
-	csvfile, err := os.Create(out_path) //"udp_results.csv.gz")
+	csvfile, err := os.Create(out_path)
 	if err != nil {
 		panic(err)
 	}
@@ -184,19 +171,6 @@ func (bs *Base_scanner) Exclude_ips() {
 	}
 }
 
-// handle ctrl+c SIGINT
-func (bs *Base_scanner) Handle_ctrl_c() {
-	interrupt_chan := make(chan os.Signal, 1)
-	signal.Notify(interrupt_chan, os.Interrupt)
-	<-interrupt_chan
-	if bs.Waiting_to_end {
-		logging.Println(3, nil, "already ending")
-	} else {
-		logging.Println(3, nil, "received SIGINT, ending")
-		close(bs.Stop_chan)
-	}
-}
-
 func (bs *Base_scanner) Read_ips_file(fname string) {
 	defer bs.Wg.Done()
 	file, err := os.Open(fname)
@@ -226,14 +200,6 @@ func (bs *Base_scanner) Read_ips_file(fname string) {
 	bs.Waiting_to_end = true
 	time.Sleep(10 * time.Second)
 	close(bs.Stop_chan)
-}
-
-func (bs *Base_scanner) Close_handle(handle *pcapgo.EthernetHandle) {
-	defer bs.Wg.Done()
-	<-bs.Stop_chan
-	logging.Println(3, nil, "closing handle")
-	handle.Close()
-	logging.Println(3, nil, "handle closed")
 }
 
 func (bs *Base_scanner) Packet_capture(handle *pcapgo.EthernetHandle) {

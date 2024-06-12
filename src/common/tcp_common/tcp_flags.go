@@ -1,11 +1,11 @@
-package tcpscanner
+package tcp_common
 
 // a simple struct for all the tcp flags needed
 type TCP_flags struct {
 	FIN, SYN, RST, PSH, ACK bool
 }
 
-func (flags TCP_flags) equals(tomatch TCP_flags) bool {
+func (flags TCP_flags) Equals(tomatch TCP_flags) bool {
 	return flags.FIN == tomatch.FIN &&
 		flags.SYN == tomatch.SYN &&
 		flags.RST == tomatch.RST &&
@@ -13,8 +13,8 @@ func (flags TCP_flags) equals(tomatch TCP_flags) bool {
 		flags.ACK == tomatch.ACK
 }
 
-func (flags TCP_flags) is_PSH_ACK() bool {
-	return flags.equals(TCP_flags{
+func (flags TCP_flags) Is_PSH_ACK() bool {
+	return flags.Equals(TCP_flags{
 		FIN: false,
 		SYN: false,
 		RST: false,
@@ -23,8 +23,8 @@ func (flags TCP_flags) is_PSH_ACK() bool {
 	})
 }
 
-func (flags TCP_flags) is_SYN_ACK() bool {
-	return flags.equals(TCP_flags{
+func (flags TCP_flags) Is_SYN_ACK() bool {
+	return flags.Equals(TCP_flags{
 		FIN: false,
 		SYN: true,
 		RST: false,
@@ -33,8 +33,18 @@ func (flags TCP_flags) is_SYN_ACK() bool {
 	})
 }
 
-func (flags TCP_flags) is_FIN_ACK() bool {
-	return flags.equals(TCP_flags{
+func (flags TCP_flags) Is_SYN() bool {
+	return flags.Equals(TCP_flags{
+		FIN: false,
+		SYN: true,
+		RST: false,
+		PSH: false,
+		ACK: false,
+	})
+}
+
+func (flags TCP_flags) Is_FIN_ACK() bool {
+	return flags.Equals(TCP_flags{
 		FIN: true,
 		SYN: false,
 		RST: false,
@@ -43,8 +53,8 @@ func (flags TCP_flags) is_FIN_ACK() bool {
 	})
 }
 
-func (flags TCP_flags) is_FIN_PSH_ACK() bool {
-	return flags.equals(TCP_flags{
+func (flags TCP_flags) Is_FIN_PSH_ACK() bool {
+	return flags.Equals(TCP_flags{
 		FIN: true,
 		SYN: false,
 		RST: false,

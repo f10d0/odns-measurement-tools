@@ -6,6 +6,7 @@ import (
 	"dns_tools/logging"
 	tcpscanner "dns_tools/scanner/tcp"
 	udpscanner "dns_tools/scanner/udp"
+	traceroute_tcp "dns_tools/traceroute"
 	"flag"
 	"fmt"
 	"os"
@@ -14,7 +15,7 @@ import (
 func main() {
 	var (
 		help_flag    = flag.Bool("help", false, "Display help")
-		mode_flag    = flag.String("mode", "", "available modes: scan, traceroute")
+		mode_flag    = flag.String("mode", "", "available modes: (s)scan, (t)trace,traceroute")
 		mode_alias   = flag.String("m", "", "alias for --mode")
 		prot_flag    = flag.String("protocol", "", "available protocols: tcp, udp")
 		prot_alias   = flag.String("p", "", "alias for --protocol")
@@ -59,6 +60,8 @@ func main() {
 			config.Cfg.Verbosity = *debug_level
 		}
 		switch *mode_flag {
+		case "s":
+			fallthrough
 		case "scan":
 			if *prot_flag == "" {
 				fmt.Println("missing protocol")
@@ -69,18 +72,34 @@ func main() {
 				fmt.Println("starting tcp scan")
 				logging.Runlog_prefix = "TCP-SCAN"
 				var tcp_scanner tcpscanner.Tcp_scanner
-				tcp_scanner.Start_scan(*config_path, flag.Args())
+				tcp_scanner.Start_scan(flag.Args())
 			case "udp":
 				fmt.Println("starting udp scan")
 				logging.Runlog_prefix = "UDP-SCAN"
 				var udp_scanner udpscanner.Udp_scanner
-				udp_scanner.Start_scan(*config_path, flag.Args())
+				udp_scanner.Start_scan(flag.Args())
 			default:
 				fmt.Println("wrong protocol")
 				os.Exit(int(common.WRONG_INPUT_ARGS))
 			}
+		case "t":
+			fallthrough
+		case "trace":
+			fallthrough
 		case "traceroute":
-			fmt.Println("starting traceroute")
+			if *prot_flag == "" {
+				fmt.Println("missing protocol")
+				os.Exit(int(common.WRONG_INPUT_ARGS))
+			}
+			switch *prot_flag {
+			case "tcp":
+				fmt.Println("starting tcp traceroute")
+				var tcp_traceroute traceroute_tcp.Tcp_traceroute
+				tcp_traceroute.Start_traceroute(flag.Args())
+			default:
+				fmt.Println("wrong protocol")
+				os.Exit(int(common.WRONG_INPUT_ARGS))
+			}
 		default:
 			fmt.Println("wrong mode")
 			os.Exit(int(common.WRONG_INPUT_ARGS))
