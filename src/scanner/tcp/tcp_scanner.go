@@ -350,9 +350,9 @@ func (tcps *Tcp_scanner) Handle_pkt(pkt gopacket.Packet) {
 }
 
 func (tcps *Tcp_scanner) send_syn(id uint32, dst_ip net.IP) {
-	// generate sequence number based on the first 21 bits of the hash
+	// generate sequence number based on the first 21 bits of the id
 	seq := (id & 0x1FFFFF) * 2048
-	port := layers.TCPPort(((id & 0xFFE00000) >> 21) + 61440)
+	port := layers.TCPPort((id >> 21) + 61440)
 	logging.Println(6, nil, "sending syn to", dst_ip, "with seq_num=", seq)
 	// check for sequence number collisions
 	tcps.Scan_data.Mu.Lock()
@@ -465,9 +465,11 @@ func (tcps *Tcp_scanner) gen_ips(netip net.IP, hostsize int) {
 	}
 	// wait some time to send out SYNs & handle the responses
 	// of the IPs just read before ending the program
-	logging.Println(3, "all ips generated, waiting to end ...")
+	var wait_time int = len(tcps.Ip_chan)/config.Cfg.Pkts_per_sec + 10
+	logging.Println(3, nil, "all ips generated, waiting", wait_time, "seconds to end")
 	tcps.Waiting_to_end = true
-	time.Sleep(10 * time.Second)
+	// time to wait until end based on packet rate + channel size
+	time.Sleep(time.Duration(wait_time) * time.Second)
 	close(tcps.Stop_chan)
 }
 

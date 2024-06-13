@@ -302,9 +302,11 @@ func (udps *Udp_scanner) gen_ips(netip net.IP, hostsize int) {
 	}
 	// wait some time to send out SYNs & handle the responses
 	// of the IPs just generated before ending the program
-	logging.Println(3, nil, "all ips generated, waiting to end ...")
+	var wait_time int = len(udps.Ip_chan)/config.Cfg.Pkts_per_sec + 10
+	logging.Println(3, nil, "all ips generated, waiting", wait_time, "seconds to end")
 	udps.Waiting_to_end = true
-	time.Sleep(10 * time.Second)
+	// time to wait until end based on packet rate + channel size
+	time.Sleep(time.Duration(wait_time) * time.Second)
 	close(udps.Stop_chan)
 }
 

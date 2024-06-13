@@ -194,9 +194,11 @@ func (bs *Base_scanner) Read_ips_file(fname string) {
 	}
 	// wait some time to send out SYNs & handle the responses
 	// of the IPs just read before ending the program
-	logging.Println(3, nil, "read all ips, waiting to end ...")
+	var wait_time int = len(bs.Ip_chan)/config.Cfg.Pkts_per_sec + 10
+	logging.Println(3, nil, "read all ips, waiting", wait_time, "seconds to end")
 	bs.Waiting_to_end = true
-	time.Sleep(10 * time.Second)
+	// time to wait until end based on packet rate + channel size
+	time.Sleep(time.Duration(wait_time) * time.Second)
 	close(bs.Stop_chan)
 }
 
