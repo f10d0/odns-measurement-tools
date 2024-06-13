@@ -75,7 +75,6 @@ func (bs *Base_scanner) Write_results(out_path string) {
 	for {
 		select {
 		case scan_item := <-bs.Write_chan:
-			//udp: writer.Write(scanner.scan_item_to_strarr(scan_item))
 			bs.Scanner_methods.Write_item(scan_item)
 		case <-bs.Stop_chan:
 			return
@@ -134,6 +133,9 @@ func (bs *Base_scanner) Exclude_ips() {
 	}
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
+		if bs.Waiting_to_end {
+			return
+		}
 		line := scanner.Text()
 		if line == "" {
 			continue

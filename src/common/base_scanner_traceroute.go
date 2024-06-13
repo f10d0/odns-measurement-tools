@@ -66,6 +66,7 @@ func (st *Scanner_traceroute) Handle_ctrl_c() {
 	if st.Waiting_to_end {
 		logging.Println(3, nil, "already ending")
 	} else {
+		st.Waiting_to_end = true
 		logging.Println(3, nil, "received SIGINT, ending")
 		close(st.Stop_chan)
 	}
