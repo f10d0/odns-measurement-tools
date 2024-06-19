@@ -86,7 +86,7 @@ def process_go_results(load_fname: str):
                     continue
                 arecord = ip_address(arecs[0] if arecs[1]==REFERENCE_IP else arecs[1])
                 outitem = OutputItem(
-                    split[GoPos.ID],
+                    split[GoPos.ID.value],
                     ip_address(split[GoPos.TARGET_IP.value]),
                     ip_address(split[GoPos.RESP_IP.value]),
                     arecord,
