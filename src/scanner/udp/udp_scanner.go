@@ -255,7 +255,7 @@ func (udps *Udp_scanner) Handle_pkt(pkt gopacket.Packet) {
 	}
 }
 
-func (udps *Udp_scanner) init_udp(port_min uint16, port_max uint16) {
+func (udps *Udp_scanner) init_udp() {
 	defer udps.Wg.Done()
 	for {
 		select {
@@ -346,7 +346,7 @@ func (udps *Udp_scanner) Start_scan(args []string) {
 	// synced between multiple init_udp()
 	udps.ip_loop_id = synced_init{
 		id:    0,
-		port:  61440,
+		port:  config.Cfg.Port_min,
 		dnsid: 0,
 	}
 	// before running disable icmp unreachable msgs
@@ -413,7 +413,7 @@ func (udps *Udp_scanner) Start_scan(args []string) {
 	}
 	for i := 0; i < 8; i++ {
 		udps.Wg.Add(1)
-		go udps.init_udp(config.Cfg.Port_min, config.Cfg.Port_max)
+		go udps.init_udp()
 	}
 	go udps.Close_handle(handle)
 	udps.Wg.Wait()
