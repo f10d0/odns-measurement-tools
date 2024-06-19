@@ -23,11 +23,11 @@ class InPos(Enum):
 # input csv id is key
 output_df: dict[int, OutputItem]= {}
 
-if len(sys.argv) == 2:
+if len(sys.argv) == 3:
     load_fname = sys.argv[1]
-    save_fname = sys.argv[1].split(".")[0]+"_combined.csv.gz"
+    save_fname = sys.argv[2]
 else:
-    print("call like this: python postproc_data_tcp_pure.py <filename.csv.gz>")
+    print("call like this: python postproc_data_tcp_pure.py <inputfile.csv.gz> <outputfile.csv.gz>")
     exit(1)
 
 # we will read the input csv
