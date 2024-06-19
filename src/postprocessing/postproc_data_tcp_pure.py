@@ -33,7 +33,7 @@ class InPos(Enum):
 # input csv id is key
 output_df: dict[int, OutputItem]= {}
 
-if len(sys.argv) == 2:
+if len(sys.argv) == 3:
     load_fname = sys.argv[1]
     save_fname = sys.argv[2]
 else:
