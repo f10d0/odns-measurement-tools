@@ -70,7 +70,7 @@ def writer_thread(save_fname: str):
             item = QUEUE.get()
             if item is None: # sentinel
                 break
-            out_file.write(f"{item.id};{item.target_ip};{item.response_ip};{item.arecord};{item.timestamp};{item.odns_type}\n")
+            out_file.write(f"{item.id};{item.target_ip};{item.response_ip};{item.arecord};{item.odns_type};{item.timestamp}\n")
 
 def process_go_results(load_fname: str):
     with gzip.open(load_fname, 'rt', encoding="utf-8") as input_file:
