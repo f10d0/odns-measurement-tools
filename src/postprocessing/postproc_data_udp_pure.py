@@ -27,6 +27,7 @@ QUEUE = Queue()
 # this will more or less represent a single row of the output csv
 @dataclass
 class OutputItem:
+    id: str
     target_ip: ip_address
     response_ip: ip_address
     arecord: ip_address
@@ -69,7 +70,7 @@ def writer_thread(save_fname: str):
             item = QUEUE.get()
             if item is None: # sentinel
                 break
-            out_file.write(f"{item.target_ip};{item.response_ip};{item.arecord};{item.timestamp};{item.odns_type}\n")
+            out_file.write(f"{item.id};{item.target_ip};{item.response_ip};{item.arecord};{item.timestamp};{item.odns_type}\n")
 
 def process_go_results(load_fname: str):
     with gzip.open(load_fname, 'rt', encoding="utf-8") as input_file:
@@ -85,6 +86,7 @@ def process_go_results(load_fname: str):
                     continue
                 arecord = ip_address(arecs[0] if arecs[1]==REFERENCE_IP else arecs[1])
                 outitem = OutputItem(
+                    split[GoPos.ID],
                     ip_address(split[GoPos.TARGET_IP.value]),
                     ip_address(split[GoPos.RESP_IP.value]),
                     arecord,
@@ -138,7 +140,7 @@ class WorkerProcess(Process):
                     if int(split[InPos.RESP_FLAG.value])==1: # response
                         self.process_resp_line(output_df, split)
                     elif offset==0: # request (for everything except the first file we only want the responses)
-                        outitem = OutputItem(ip_address(split[InPos.IP.value]),None, None, split[InPos.TS.value],"")
+                        outitem = OutputItem("",ip_address(split[InPos.IP.value]),None, None, split[InPos.TS.value],"")
                         output_df[(split[InPos.ID.value],int(split[InPos.SP.value]))] = outitem
                     elif offset!=0 and (split[InPos.ID.value],int(split[InPos.SP.value])) in output_df.keys():
                         # zmap might have already reused this port and dnsid -> so if there is a request with the same key already in the dict, this one is removed
