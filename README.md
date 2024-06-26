@@ -24,7 +24,6 @@ Regular scan results are published under http://odns.secnow.net
 
 ## DNS over TCP
 
-### Usage
 **Setup:**
 Modify the config accordingly (set your interface name and IP-address).
 
@@ -45,14 +44,13 @@ Results are written to `tcp_results.csv.gz`
 
 **Postprocessing:**
 
-Transform the data into a format useful for postprocessing:
+Transform the data into a format useful for classification:
 ```
 python3 src/postprocessing/postproc_data_tcp_pure.py <input_file> <output_file>
 ```
 
 ## DNS over UDP
 
-### Usage
 **Setup:**
 Modify the config accordingly (set your interface name and IP-address).
 
@@ -65,7 +63,18 @@ The port range can also be specified in the config. By default the range lies ou
 sudo go run dns_tool.go --mode scan --protocol udp --config src/scanner/udp/config.yml [net-to-scan-in-CIDR|filename-of-ip-list]
 ```
 
-Results are written to `udp_results.csv.gz` and are in a similiar format as the `tcp_results.csv.gz`.
+Results are written to `udp_results.csv.gz`
+
+**Postprocessing:**
+
+Appends the type of forwarder to the results file
+
+```
+python3 src/postprocessing/postproc_data_udp_pure.py <input_file> <output_file>
+```
+
+
+The results are in the same format as the tcp results.
 
 
 ## DNS Traceroute Tools
@@ -74,7 +83,7 @@ These tools measure the path to and beyond transparent DNS forwarders.
 Sends out SYN packets with increasing IP TTL values.
 As soon as a SYN/ACK arrives, the tool starts to send DNS requests over TCP with increasing IP TTL to explore the path between scanner over target to DNS resolver.
 
-**Usage**
+**Run the traceroute**
 ```
 sudo go run dns_tool.go --mode traceroute --protocol tcp [target-ip|path-to-list-of-ips]
 ```
