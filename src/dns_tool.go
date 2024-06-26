@@ -10,7 +10,28 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime"
+	"runtime/pprof"
 )
+
+var cpu_file *os.File
+
+func start_profiling() {
+	var err error
+	cpu_file, err = os.Create("cpu_ns.prof")
+	if err != nil {
+		panic(err)
+	}
+	runtime.SetCPUProfileRate(200)
+	if err := pprof.StartCPUProfile(cpu_file); err != nil {
+		panic(err)
+	}
+}
+
+func stop_profiling() {
+	pprof.StopCPUProfile()
+	cpu_file.Close()
+}
 
 func main() {
 	var (
@@ -25,6 +46,7 @@ func main() {
 		pktrate_alias = flag.Int("r", -2, "alias for rate")
 		outpath       = flag.String("out", "", "output file path")
 		outpath_alias = flag.String("o", "", "alias for out")
+		profile       = flag.Bool("profile", false, "enable cpu profiling")
 		debug_level   = flag.Int("verbose", -1, "overwrites the debug level set in the config")
 		debug_alias   = flag.Int("v", -1, "alias for --verbose")
 	)
@@ -71,6 +93,10 @@ func main() {
 	if *debug_level > -1 {
 		fmt.Println("verbosity level set to", *debug_level)
 		config.Cfg.Verbosity = *debug_level
+	}
+
+	if *profile {
+		start_profiling()
 	}
 
 	if *mode_flag != "" {
@@ -128,5 +154,9 @@ func main() {
 	} else {
 		fmt.Println("missing mode (--mode)")
 		os.Exit(int(common.WRONG_INPUT_ARGS))
+	}
+
+	if *profile {
+		stop_profiling()
 	}
 }
