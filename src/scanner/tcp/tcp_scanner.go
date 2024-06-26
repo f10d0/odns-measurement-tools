@@ -159,8 +159,8 @@ func scan_item_to_strarr(scan_item *tcp_scan_data_item) []string {
 	return record
 }
 
-func (tcps *Tcp_scanner) Write_item(root_item scanner.Scan_data_item) {
-	tcp_root_item, ok := root_item.(*tcp_scan_data_item)
+func (tcps *Tcp_scanner) Write_item(root_item *scanner.Scan_data_item) {
+	tcp_root_item, ok := (*root_item).(*tcp_scan_data_item)
 	if !ok {
 		return
 	}
@@ -261,7 +261,8 @@ func (tcps *Tcp_scanner) Handle_pkt(pkt gopacket.Packet) {
 			}
 			logging.Println(5, nil, "ACKing FIN-ACK")
 			tcps.Send_ack_pos_fin(tcp_root_data_item.ip, tcp_l.DstPort, tcp_l.Seq, tcp_l.Ack, false)
-			tcps.Write_chan <- tcp_root_data_item
+			var switcheroo scanner.Scan_data_item = tcp_root_data_item
+			tcps.Write_chan <- &switcheroo
 		}
 	} else
 	// PSH-ACK || FIN-PSH-ACK == DNS Response
@@ -343,7 +344,7 @@ func (tcps *Tcp_scanner) Handle_pkt(pkt gopacket.Packet) {
 		// if this pkt is fin-psh-ack we will remove it from the map at this point already
 		// because we wont receive any further fin-ack from the server
 		if tcpflags.Is_FIN_PSH_ACK() {
-			tcps.Write_chan <- _root_data_item
+			tcps.Write_chan <- &_root_data_item
 		}
 	}
 }

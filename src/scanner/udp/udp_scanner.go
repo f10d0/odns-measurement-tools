@@ -77,8 +77,8 @@ type udp_scan_item_key struct {
 	dnsid uint16
 }
 
-func (udps *Udp_scanner) Write_item(scan_item scanner.Scan_data_item) {
-	udp_scan_item, ok := scan_item.(*udp_scan_data_item)
+func (udps *Udp_scanner) Write_item(scan_item *scanner.Scan_data_item) {
+	udp_scan_item, ok := (*scan_item).(*udp_scan_data_item)
 	if !ok {
 		return
 	}
@@ -236,7 +236,7 @@ func (udps *Udp_scanner) Handle_pkt(pkt gopacket.Packet) {
 		udp_scan_item.answerip = ip.SrcIP
 		udp_scan_item.dns_recs = answers_ip
 		// queue for writeout
-		udps.Write_chan <- scan_item
+		udps.Write_chan <- &scan_item
 	}
 }
 

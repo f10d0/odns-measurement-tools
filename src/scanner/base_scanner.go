@@ -33,14 +33,14 @@ type root_scan_data struct {
 }
 
 type IScanner_Methods interface {
-	Write_item(scan_item Scan_data_item)
+	Write_item(scan_item *Scan_data_item)
 	Handle_pkt(pkt gopacket.Packet)
 }
 
 type Base_scanner struct {
 	common.Scanner_traceroute
 	Blocked_nets    []*net.IPNet
-	Write_chan      chan Scan_data_item
+	Write_chan      chan *Scan_data_item
 	Scan_data       root_scan_data
 	Scanner_methods IScanner_Methods
 }
@@ -48,7 +48,7 @@ type Base_scanner struct {
 func (bs *Base_scanner) Scanner_init() {
 	bs.Base_init()
 	bs.Blocked_nets = []*net.IPNet{}
-	bs.Write_chan = make(chan Scan_data_item, 4096)
+	bs.Write_chan = make(chan *Scan_data_item, 4096)
 	bs.Scan_data = root_scan_data{
 		Items: make(map[scan_item_key]Scan_data_item),
 	}
