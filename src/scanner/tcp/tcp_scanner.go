@@ -20,7 +20,6 @@ import (
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
 	"github.com/google/gopacket/pcapgo"
-	"golang.org/x/net/ipv4"
 )
 
 type Tcp_scanner struct {
@@ -475,6 +474,7 @@ func (tcps *Tcp_scanner) gen_ips(netip net.IP, hostsize int) {
 
 func (tcps *Tcp_scanner) Start_scan(args []string) {
 	tcps.Scanner_init()
+	tcps.L2_sender = &tcps.L2
 	tcps.Scanner_methods = tcps
 	tcps.Base_methods = tcps
 	// before running the script run below iptables command so that kernel doesn't send out RSTs
@@ -514,17 +514,6 @@ func (tcps *Tcp_scanner) Start_scan(args []string) {
 	if err := handle.SetBPF(bpf_raw); err != nil {
 		panic(err)
 	}
-	// create raw l3 socket
-	var pkt_con net.PacketConn
-	pkt_con, err = net.ListenPacket("ip4:tcp", config.Cfg.Iface_ip)
-	if err != nil {
-		panic(err)
-	}
-	tcps.Raw_con, err = ipv4.NewRawConn(pkt_con)
-	if err != nil {
-		panic(err)
-	}
-	tcps.Sender_raw_con = tcps.Raw_con
 
 	// start packet capture as goroutine
 	tcps.Wg.Add(5)

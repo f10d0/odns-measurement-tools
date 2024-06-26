@@ -22,8 +22,6 @@ import (
 	"github.com/google/gopacket/pcap"
 	"github.com/google/gopacket/pcapgo"
 
-	"golang.org/x/net/ipv4"
-
 	"github.com/breml/bpfutils"
 )
 
@@ -40,6 +38,7 @@ func (tcpt *Tcp_traceroute) Traceroute_init() {
 	tcpt.Base_init()
 	tcpt.lowest_port = 61024 // smallest multiple of 32 outside random port range
 	tcpt.write_chan = make(chan *tracert_param, 256)
+	tcpt.L2_sender = &tcpt.L2
 }
 
 type tracert_hop struct {
@@ -743,17 +742,6 @@ func (tcpt *Tcp_traceroute) Start_traceroute(args []string) {
 	if err := handle.SetBPF(bpf_raw); err != nil {
 		panic(err)
 	}
-	// create raw l3 socket
-	var pkt_con net.PacketConn
-	pkt_con, err = net.ListenPacket("ip4:tcp", config.Cfg.Iface_ip)
-	if err != nil {
-		panic(err)
-	}
-	tcpt.Raw_con, err = ipv4.NewRawConn(pkt_con)
-	if err != nil {
-		panic(err)
-	}
-	tcpt.Sender_raw_con = tcpt.Raw_con
 
 	// start packet capture as goroutine
 	tcpt.Wg.Add(4)

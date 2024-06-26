@@ -1,6 +1,7 @@
 package udpscanner
 
 import (
+	"dns_tools/common"
 	"dns_tools/config"
 	"dns_tools/generator"
 	"dns_tools/logging"
@@ -18,8 +19,6 @@ import (
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
 	"github.com/google/gopacket/pcapgo"
-
-	"golang.org/x/net/ipv4"
 
 	"github.com/breml/bpfutils"
 )
@@ -111,31 +110,17 @@ func scan_item_to_strarr(scan_item *udp_scan_data_item) []string {
 	return record
 }
 
-var opts gopacket.SerializeOptions = gopacket.SerializeOptions{
-	ComputeChecksums: true,
-	FixLengths:       true,
-}
-
 func (udps *Udp_scanner) send_udp_pkt(ip layers.IPv4, udp layers.UDP, payload []byte) {
-	ip_head_buf := gopacket.NewSerializeBuffer()
-	err := ip.SerializeTo(ip_head_buf, opts)
-	if err != nil {
-		panic(err)
-	}
-	ip_head, err := ipv4.ParseHeader(ip_head_buf.Bytes())
-	if err != nil {
-		panic(err)
-	}
-
-	udp_buf := gopacket.NewSerializeBuffer()
-	err = gopacket.SerializeLayers(udp_buf, opts, &udp, gopacket.Payload(payload))
-	if err != nil {
+	buffer := gopacket.NewSerializeBuffer()
+	if err := gopacket.SerializeLayers(buffer, common.Opts,
+		&ip,
+		&udp,
+		gopacket.Payload(payload),
+	); err != nil {
 		panic(err)
 	}
 
-	if err = udps.Raw_con.WriteTo(ip_head, udp_buf.Bytes(), nil); err != nil {
-		panic(err)
-	}
+	udps.L2.Send(buffer.Bytes())
 }
 
 func (udps *Udp_scanner) build_dns(dst_ip net.IP, src_port layers.UDPPort, dnsid uint16) (layers.IPv4, layers.UDP, []byte) {
@@ -349,8 +334,6 @@ func (udps *Udp_scanner) Start_scan(args []string) {
 		port:  config.Cfg.Port_min,
 		dnsid: 0,
 	}
-	// before running disable icmp unreachable msgs
-	// sudo iptables -I OUTPUT -p icmp --icmp-type destination-unreachable -j DROP
 
 	// write start ts to log
 	logging.Write_to_runlog("START " + time.Now().UTC().String())
@@ -386,16 +369,6 @@ func (udps *Udp_scanner) Start_scan(args []string) {
 	}
 	bpf_raw := bpfutils.ToBpfRawInstructions(bpf_instr)
 	if err := handle.SetBPF(bpf_raw); err != nil {
-		panic(err)
-	}
-	// create raw l3 socket
-	var pkt_con net.PacketConn
-	pkt_con, err = net.ListenPacket("ip4:udp", config.Cfg.Iface_ip)
-	if err != nil {
-		panic(err)
-	}
-	udps.Raw_con, err = ipv4.NewRawConn(pkt_con)
-	if err != nil {
 		panic(err)
 	}
 
