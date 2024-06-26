@@ -325,7 +325,7 @@ func (udps *Udp_scanner) unbind_ports() {
 	}
 }
 
-func (udps *Udp_scanner) Start_scan(args []string) {
+func (udps *Udp_scanner) Start_scan(args []string, outpath string) {
 	udps.Scanner_init()
 	udps.Scanner_methods = udps
 	udps.Base_methods = udps
@@ -377,7 +377,7 @@ func (udps *Udp_scanner) Start_scan(args []string) {
 	// start packet capture as goroutine
 	udps.Wg.Add(5)
 	go udps.Packet_capture(handle)
-	go udps.Write_results("udp_results.csv.gz")
+	go udps.Write_results(outpath)
 	go udps.Timeout()
 	if fname != "" {
 		logging.Println(3, nil, "running in filename mode")

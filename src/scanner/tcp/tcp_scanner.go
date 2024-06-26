@@ -475,7 +475,7 @@ func (tcps *Tcp_scanner) gen_ips(netip net.IP, hostsize int) {
 	close(tcps.Stop_chan)
 }
 
-func (tcps *Tcp_scanner) Start_scan(args []string) {
+func (tcps *Tcp_scanner) Start_scan(args []string, outpath string) {
 	tcps.Scanner_init()
 	tcps.L2_sender = &tcps.L2
 	tcps.Scanner_methods = tcps
@@ -521,7 +521,7 @@ func (tcps *Tcp_scanner) Start_scan(args []string) {
 	// start packet capture as goroutine
 	tcps.Wg.Add(5)
 	go tcps.Packet_capture(handle)
-	go tcps.Write_results("tcp_results.csv.gz")
+	go tcps.Write_results(outpath)
 	go tcps.Timeout()
 	if fname != "" {
 		logging.Println(3, nil, "running in filename mode")

@@ -23,6 +23,8 @@ func main() {
 		config_alias  = flag.String("c", "", "alias for --config")
 		pktrate       = flag.Int("rate", -2, "packet rate in pkt/s, -1 for unlimited")
 		pktrate_alias = flag.Int("r", -2, "alias for rate")
+		outpath       = flag.String("out", "", "output file path")
+		outpath_alias = flag.String("o", "", "alias for out")
 		debug_level   = flag.Int("verbose", -1, "overwrites the debug level set in the config")
 		debug_alias   = flag.Int("v", -1, "alias for --verbose")
 	)
@@ -49,6 +51,9 @@ func main() {
 	}
 	if *pktrate_alias > -2 {
 		pktrate = pktrate_alias
+	}
+	if *outpath_alias != "" {
+		outpath = outpath_alias
 	}
 
 	if *config_path != "" {
@@ -82,12 +87,18 @@ func main() {
 				fmt.Println("starting tcp scan")
 				logging.Runlog_prefix = "TCP-SCAN"
 				var tcp_scanner tcpscanner.Tcp_scanner
-				tcp_scanner.Start_scan(flag.Args())
+				if *outpath == "" {
+					*outpath = "tcp_results.csv.gz"
+				}
+				tcp_scanner.Start_scan(flag.Args(), *outpath)
 			case "udp":
 				fmt.Println("starting udp scan")
 				logging.Runlog_prefix = "UDP-SCAN"
 				var udp_scanner udpscanner.Udp_scanner
-				udp_scanner.Start_scan(flag.Args())
+				if *outpath == "" {
+					*outpath = "udp_results.csv.gz"
+				}
+				udp_scanner.Start_scan(flag.Args(), *outpath)
 			default:
 				fmt.Println("wrong protocol")
 				os.Exit(int(common.WRONG_INPUT_ARGS))
