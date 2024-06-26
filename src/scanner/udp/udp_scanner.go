@@ -259,11 +259,13 @@ func (udps *Udp_scanner) init_udp() {
 			}
 			id, src_port, dns_id := udps.update_sync_init()
 			logging.Println(5, nil, "ip:", dst_ip, "id=", id, "port=", src_port, "dns_id=", dns_id)
-			r := udps.Send_limiter.Reserve()
-			if !r.OK() {
-				log.Println("Rate limit exceeded")
+			if config.Cfg.Pkts_per_sec > 0 {
+				r := udps.Send_limiter.Reserve()
+				if !r.OK() {
+					log.Println("Rate limit exceeded")
+				}
+				time.Sleep(r.Delay())
 			}
-			time.Sleep(r.Delay())
 			udps.send_dns(id, dst_ip, layers.UDPPort(src_port), dns_id)
 		case <-udps.Stop_chan:
 			return
