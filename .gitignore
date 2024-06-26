@@ -9,3 +9,4 @@ run.elf
 *.csv
 __pycache__/
 backup/
+*.prof

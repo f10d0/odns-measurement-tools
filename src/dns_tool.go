@@ -96,6 +96,7 @@ func main() {
 	}
 
 	if *profile {
+		// go tool pprof -http=:8080 cpu.prof
 		start_profiling()
 	}
 
