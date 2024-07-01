@@ -477,6 +477,7 @@ func (tcps *Tcp_scanner) gen_ips(netip net.IP, hostsize int) {
 
 func (tcps *Tcp_scanner) Start_scan(args []string, outpath string) {
 	tcps.Scanner_init()
+	tcps.Sender_init()
 	tcps.L2_sender = &tcps.L2
 	tcps.Scanner_methods = tcps
 	tcps.Base_methods = tcps

@@ -1,7 +1,7 @@
 package udpscanner
 
 import (
-	"dns_tools/common"
+	"dns_tools/common/udp_common"
 	"dns_tools/config"
 	"dns_tools/generator"
 	"dns_tools/logging"
@@ -25,6 +25,7 @@ import (
 
 type Udp_scanner struct {
 	scanner.Base_scanner
+	udp_common.Udp_sender
 	// slice for sockets that will be bound on program start
 	bound_sockets []*net.UDPConn
 	ip_loop_id    synced_init
@@ -110,19 +111,6 @@ func scan_item_to_strarr(scan_item *udp_scan_data_item) []string {
 	return record
 }
 
-func (udps *Udp_scanner) send_udp_pkt(ip layers.IPv4, udp layers.UDP, payload []byte) {
-	buffer := gopacket.NewSerializeBuffer()
-	if err := gopacket.SerializeLayers(buffer, common.Opts,
-		&ip,
-		&udp,
-		gopacket.Payload(payload),
-	); err != nil {
-		panic(err)
-	}
-
-	udps.L2.Send(buffer.Bytes())
-}
-
 func (udps *Udp_scanner) build_dns(dst_ip net.IP, src_port layers.UDPPort, dnsid uint16) (layers.IPv4, layers.UDP, []byte) {
 	// === build packet ===
 	// Create ip layer
@@ -178,7 +166,7 @@ func (udps *Udp_scanner) send_dns(id uint32, dst_ip net.IP, src_port layers.UDPP
 	udps.Scan_data.Items[udp_scan_item_key{src_port, dnsid}] = &s_d_item
 	udps.Scan_data.Mu.Unlock()
 
-	udps.send_udp_pkt(udps.build_dns(dst_ip, src_port, dnsid))
+	udps.Send_udp_pkt(udps.build_dns(dst_ip, src_port, dnsid))
 }
 
 func (udps *Udp_scanner) Handle_pkt(pkt gopacket.Packet) {
@@ -327,6 +315,8 @@ func (udps *Udp_scanner) unbind_ports() {
 
 func (udps *Udp_scanner) Start_scan(args []string, outpath string) {
 	udps.Scanner_init()
+	udps.Sender_init()
+	udps.L2_sender = &udps.L2
 	udps.Scanner_methods = udps
 	udps.Base_methods = udps
 	udps.bound_sockets = []*net.UDPConn{}

@@ -18,7 +18,7 @@ var cpu_file *os.File
 
 func start_profiling() {
 	var err error
-	cpu_file, err = os.Create("cpu_ns.prof")
+	cpu_file, err = os.Create("cpu.prof")
 	if err != nil {
 		panic(err)
 	}
@@ -35,20 +35,22 @@ func stop_profiling() {
 
 func main() {
 	var (
-		help_flag     = flag.Bool("help", false, "Display help")
-		mode_flag     = flag.String("mode", "", "available modes: (s)scan, (t)trace,traceroute")
-		mode_alias    = flag.String("m", "", "alias for --mode")
-		prot_flag     = flag.String("protocol", "", "available protocols: tcp, udp")
-		prot_alias    = flag.String("p", "", "alias for --protocol")
-		config_path   = flag.String("config", "", "Path to configuration file")
-		config_alias  = flag.String("c", "", "alias for --config")
-		pktrate       = flag.Int("rate", -2, "packet rate in pkt/s, -1 for unlimited")
-		pktrate_alias = flag.Int("r", -2, "alias for rate")
-		outpath       = flag.String("out", "", "output file path")
-		outpath_alias = flag.String("o", "", "alias for out")
-		profile       = flag.Bool("profile", false, "enable cpu profiling")
-		debug_level   = flag.Int("verbose", -1, "overwrites the debug level set in the config")
-		debug_alias   = flag.Int("v", -1, "alias for --verbose")
+		help_flag       = flag.Bool("help", false, "Display help")
+		mode_flag       = flag.String("mode", "", "available modes: (s)scan, (t)trace,traceroute")
+		mode_alias      = flag.String("m", "", "alias for --mode")
+		prot_flag       = flag.String("protocol", "", "available protocols: tcp, udp")
+		prot_alias      = flag.String("p", "", "alias for --protocol")
+		config_path     = flag.String("config", "", "Path to configuration file")
+		config_alias    = flag.String("c", "", "alias for --config")
+		pktrate         = flag.Int("rate", -2, "packet rate in pkt/s, -1 for unlimited")
+		pktrate_alias   = flag.Int("r", -2, "alias for rate")
+		outpath         = flag.String("out", "", "output file path")
+		outpath_alias   = flag.String("o", "", "alias for out")
+		profile         = flag.Bool("profile", false, "enable cpu profiling (output file: cpu.prof)")
+		debug_level     = flag.Int("verbose", -1, "overwrites the debug level set in the config")
+		debug_alias     = flag.Int("v", -1, "alias for --verbose")
+		ethernet_header = flag.Bool("ethernet", false, "dns_tool will manually craft the ethernet header")
+		ethernet_alias  = flag.Bool("e", false, "alias for --layer")
 	)
 
 	flag.Parse()
@@ -77,6 +79,7 @@ func main() {
 	if *outpath_alias != "" {
 		outpath = outpath_alias
 	}
+	config.Cfg.Craft_ethernet = *ethernet_alias || *ethernet_header
 
 	if *config_path != "" {
 		fmt.Println("using config", *config_path)

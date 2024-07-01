@@ -63,7 +63,8 @@ func get_mac_addr(ip net.IP) (net.HardwareAddr, error) {
 func (l2 *RawL2) Send(payload []byte) {
 	p := append(l2.Eth_header, payload...)
 
-	err := syscall.Sendto(l2.Fd, p, 0, &l2.Addr)
+	//err := syscall.Sendto(l2.Fd, p, 0, &l2.Addr)
+	err := syscall.Sendmsg(l2.Fd, p, []byte{}, &l2.Addr, 0)
 	if err != nil {
 		panic(err)
 	}
@@ -94,7 +95,7 @@ func (st *Scanner_traceroute) Base_init() {
 	}
 	srcMac := iface.HardwareAddr
 	if len(srcMac) == 0 {
-		panic(err)
+		panic("no src MAC")
 	}
 	gwIp, err := get_def_gateway()
 	if err != nil {

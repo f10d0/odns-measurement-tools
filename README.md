@@ -20,6 +20,14 @@ Regular scan results are published under http://odns.secnow.net
     	available protocols: tcp, udp
   -v, --verbose [int]
     	overwrites the debug level set in the config (default -1)
+  -e, --ethernet
+    	dns_tool will manually craft the ethernet header
+  -o, --out [string]
+    	output file path
+  --profile
+    	enable cpu profiling (output file: cpu.prof)
+  -r --rate [int]
+    	overwrites packet rate in pkt/s, -1 for unlimited (default -2)
 ```
 
 ## DNS over TCP
