@@ -2,7 +2,7 @@ module dns_tools
 
 go 1.21.4
 
-require github.com/google/gopacket v1.1.19
+require github.com/google/gopacket v1.1.20-0.20220810144506-32ee38206866
 
 replace github.com/google.gopacket => github.com/gopacket/gopacket v1.2.0
 
