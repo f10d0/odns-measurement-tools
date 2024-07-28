@@ -26,6 +26,7 @@ import (
 type Udp_scanner struct {
 	scanner.Base_scanner
 	udp_common.Udp_sender
+	udp_common.Udp_binder
 	// slice for sockets that will be bound on program start
 	bound_sockets []*net.UDPConn
 	ip_loop_id    synced_init
@@ -285,34 +286,6 @@ func (udps *Udp_scanner) gen_ips(netip net.IP, hostsize int) {
 	close(udps.Stop_chan)
 }
 
-// binding all the sockets potentially in use by the scanner
-// so no icmp port unreachable is sent and no other application
-// may use these ports by chance
-func (udps *Udp_scanner) bind_ports() {
-	logging.Println(3, nil, "Binding ports")
-	var port uint32
-	for port = (uint32)(config.Cfg.Port_min); port <= (uint32)(config.Cfg.Port_max); port++ {
-		conn, err := net.ListenUDP("udp", &net.UDPAddr{
-			IP:   net.ParseIP(config.Cfg.Iface_ip),
-			Port: (int)(port),
-		})
-		if err != nil {
-			logging.Println(2, nil, "Could not bind to UDP port", port)
-			logging.Println(2, nil, "reason:", err)
-			// TODO should then probably exclude these from the scan
-		} else {
-			udps.bound_sockets = append(udps.bound_sockets, conn)
-		}
-	}
-}
-
-func (udps *Udp_scanner) unbind_ports() {
-	logging.Println(3, nil, "Unbinding ports")
-	for _, sock := range udps.bound_sockets {
-		sock.Close()
-	}
-}
-
 func (udps *Udp_scanner) Start_scan(args []string, outpath string) {
 	udps.Scanner_init()
 	udps.Sender_init()
@@ -340,7 +313,7 @@ func (udps *Udp_scanner) Start_scan(args []string, outpath string) {
 	var hostsize int
 	fname, netip, hostsize = udps.Get_cidr_filename(args[0])
 
-	udps.bind_ports()
+	udps.Bind_ports()
 	// set the DNS_PAYLOAD_SIZE once as it is static
 	_, _, dns_payload := udps.build_dns(net.ParseIP("0.0.0.0"), 0, 0)
 	udps.DNS_PAYLOAD_SIZE = uint16(len(dns_payload))
@@ -382,7 +355,7 @@ func (udps *Udp_scanner) Start_scan(args []string, outpath string) {
 	}
 	go udps.Close_handle(handle)
 	udps.Wg.Wait()
-	udps.unbind_ports()
+	udps.Unbind_ports()
 	logging.Println(3, nil, "all routines finished")
 	logging.Write_to_runlog("END " + time.Now().UTC().String())
 	logging.Println(3, nil, "program done")
