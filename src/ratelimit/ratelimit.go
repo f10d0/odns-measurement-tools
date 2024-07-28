@@ -5,10 +5,12 @@ import (
 	"compress/gzip"
 	"dns_tools/common"
 	"dns_tools/common/udp_common"
+	"dns_tools/config"
 	"dns_tools/logging"
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -51,6 +53,8 @@ type Rate_tester struct {
 	increase_interval int // time delay between rate increases [ms]
 	rate_curve        []int
 	active_resolvers  map[Active_key]*Resolver_entry
+	current_port      uint32
+	resolver_counter  int
 }
 
 func (tester *Rate_tester) Read_forwarders(fname string) {
@@ -97,24 +101,37 @@ func (tester *Rate_tester) Read_forwarders(fname string) {
 	}
 
 	logging.Println(6, nil, "read all lines")
+	logging.Println(3, nil, "there are", len(tester.resolver_data), "resolvers")
 }
 
-func (tester *Rate_tester) send_packets() {
-	defer tester.Wg.Done()
-	tester.resolver_mu.Lock()
-	if len(tester.resolver_data) == 0 {
-		return
+func (tester *Rate_tester) send_packets(id int) {
+	defer tester.sender_wg.Done()
+	for {
+		tester.resolver_mu.Lock()
+		if len(tester.resolver_data) == 0 {
+			tester.resolver_mu.Unlock()
+			logging.Println(4, "Sender "+strconv.Itoa(id), "List exhausted, returning")
+			return
+		}
+		// retrieve the next resolver from the map
+		var key Resolver_key
+		for key = range tester.resolver_data { // pseudo-random key, TODO how random is this?
+			break
+		}
+		entry := tester.resolver_data[key]
+		delete(tester.resolver_data, key)
+		outport := tester.current_port
+		tester.current_port++
+		if tester.current_port > uint32(config.Cfg.Port_max) {
+			tester.current_port = uint32(config.Cfg.Port_min)
+		}
+		tester.active_resolvers[Active_key{port: uint16(outport)}] = entry
+		tester.resolver_counter++
+		tester.resolver_mu.Unlock()
+		// start the rate limit testing to that target
+		logging.Println(4, "Sender "+strconv.Itoa(id), "rate limit testing resolver", tester.resolver_counter, entry.resolver_ip, "on port", outport)
+		time.Sleep(5 * time.Millisecond)
 	}
-	// retrieve the next resolver from the map
-	var key Resolver_key
-	for key = range tester.resolver_data { // pseudo-random key, TODO how random is this?
-		break
-	}
-	entry := tester.resolver_data[key]
-	delete(tester.resolver_data, key)
-	tester.resolver_mu.Unlock()
-	// start the rate limit testing to that target
-	logging.Println(4, nil, "rate limit testing resolver", entry.resolver_ip)
 }
 
 func (tester *Rate_tester) Handle_pkt(pkt gopacket.Packet) {
@@ -124,7 +141,10 @@ func (tester *Rate_tester) Handle_pkt(pkt gopacket.Packet) {
 func (tester *Rate_tester) Start_ratetest() {
 	tester.rate_limit_hard = 5000
 	tester.increase_interval = 1000
-	tester.rate_curve = []int{50, 100, 200, 500}
+	tester.resolver_data = make(map[Resolver_key]*Resolver_entry)
+	tester.active_resolvers = make(map[Active_key]*Resolver_entry)
+	tester.rate_curve = []int{50, 100, 150, 200}
+	tester.current_port = uint32(config.Cfg.Port_min)
 
 	tester.Base_init()
 	tester.Bind_ports()
@@ -141,12 +161,13 @@ func (tester *Rate_tester) Start_ratetest() {
 	// TODO config variable
 	for i := 0; i < 10; i++ {
 		tester.sender_wg.Add(1)
-		go tester.send_packets()
+		go tester.send_packets(i)
 	}
 	tester.sender_wg.Wait()
+	logging.Println(3, nil, "Sending completed")
 
 	time.Sleep(5 * time.Second)
-	<-tester.Stop_chan
+	close(tester.Stop_chan)
 
 	tester.Wg.Wait()
 	tester.Unbind_ports()
