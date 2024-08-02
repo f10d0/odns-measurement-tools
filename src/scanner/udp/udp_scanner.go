@@ -108,44 +108,6 @@ func scan_item_to_strarr(scan_item *udp_scan_data_item) []string {
 	return record
 }
 
-func (udps *Udp_scanner) build_dns(dst_ip net.IP, src_port layers.UDPPort, dnsid uint16) (layers.IPv4, layers.UDP, []byte) {
-	// === build packet ===
-	// Create ip layer
-	ip := layers.IPv4{
-		Version:  4,
-		TTL:      64,
-		SrcIP:    net.ParseIP(config.Cfg.Iface_ip),
-		DstIP:    dst_ip,
-		Protocol: layers.IPProtocolUDP,
-		Id:       1,
-	}
-
-	// Create udp layer
-	udp := layers.UDP{
-		SrcPort: src_port,
-		DstPort: layers.UDPPort(config.Cfg.Dst_port),
-	}
-	udp.SetNetworkLayerForChecksum(&ip)
-
-	// create dns layers
-	qst := layers.DNSQuestion{
-		Name:  []byte(config.Cfg.Dns_query),
-		Type:  layers.DNSTypeA,
-		Class: layers.DNSClassIN,
-	}
-	dns := layers.DNS{
-		Questions: []layers.DNSQuestion{qst},
-		RD:        true,
-		QDCount:   1,
-		OpCode:    layers.DNSOpCodeQuery,
-		ID:        dnsid,
-	}
-
-	dns_buf := gopacket.NewSerializeBuffer()
-	gopacket.SerializeLayers(dns_buf, gopacket.SerializeOptions{}, &dns)
-	return ip, udp, dns_buf.Bytes()
-}
-
 func (udps *Udp_scanner) send_dns(id uint32, dst_ip net.IP, src_port layers.UDPPort, dnsid uint16) {
 	// generate sequence number based on the first 21 bits of the hash
 	logging.Println(6, nil, dst_ip, "port=", src_port, "dnsid=", dnsid)
@@ -163,7 +125,7 @@ func (udps *Udp_scanner) send_dns(id uint32, dst_ip net.IP, src_port layers.UDPP
 	udps.Scan_data.Items[udp_scan_item_key{src_port, dnsid}] = &s_d_item
 	udps.Scan_data.Mu.Unlock()
 
-	udps.Send_udp_pkt(udps.build_dns(dst_ip, src_port, dnsid))
+	udps.Send_udp_pkt(udps.Build_dns(dst_ip, src_port, dnsid, config.Cfg.Dns_query))
 }
 
 func (udps *Udp_scanner) Handle_pkt(pkt gopacket.Packet) {
@@ -311,7 +273,7 @@ func (udps *Udp_scanner) Start_scan(args []string, outpath string) {
 
 	udps.Bind_ports()
 	// set the DNS_PAYLOAD_SIZE once as it is static
-	_, _, dns_payload := udps.build_dns(net.ParseIP("0.0.0.0"), 0, 0)
+	_, _, dns_payload := udps.Build_dns(net.ParseIP("0.0.0.0"), 0, 0, config.Cfg.Dns_query)
 	udps.DNS_PAYLOAD_SIZE = uint16(len(dns_payload))
 	handle := common.Get_ether_handle("udp")
 	// start packet capture as goroutine

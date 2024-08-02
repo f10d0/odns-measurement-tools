@@ -3,10 +3,13 @@ package ratelimit
 import (
 	"bufio"
 	"compress/gzip"
+	"crypto/sha256"
 	"dns_tools/common"
 	"dns_tools/common/udp_common"
 	"dns_tools/config"
 	"dns_tools/logging"
+	"encoding/binary"
+	"encoding/hex"
 	"log"
 	"net"
 	"os"
@@ -16,6 +19,7 @@ import (
 	"time"
 
 	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
 	"golang.org/x/time/rate"
 )
 
@@ -27,11 +31,13 @@ const (
 
 type Resolver_entry struct {
 	resolver_ip     net.IP
-	tfwd_ips        []net.IP      // ip pool
-	rate_pos        int           // the rate will increase over time up to a maximum value
+	tfwd_ips        []net.IP // ip pool
+	tfwd_pool_pos   int
+	rate_pos        int           // the current pos in the rate slice aka the current send rate
 	rate_limiter    *rate.Limiter // current rate limiter
-	answer_tss      []int64       // answer timestamps, we will log the timestamp of every incoming packet
-	moving_avg_rate int
+	answer_tss      []int64       // us, answer timestamps, log timestamp of every incoming packet
+	moving_avg_rate float64
+	outport         uint16
 }
 
 type Resolver_key struct {
@@ -48,13 +54,13 @@ type Rate_tester struct {
 	udp_common.Udp_sender
 	resolver_data     map[Resolver_key]*Resolver_entry
 	resolver_mu       sync.Mutex
+	active_resolvers  map[Active_key]*Resolver_entry
 	sender_wg         sync.WaitGroup
-	rate_limit_hard   int // maximum send rate to test [Pkts/s]
 	increase_interval int // time delay between rate increases [ms]
 	rate_curve        []int
-	active_resolvers  map[Active_key]*Resolver_entry
 	current_port      uint32
 	resolver_counter  int
+	rec_thres         float64
 }
 
 func (tester *Rate_tester) Read_forwarders(fname string) {
@@ -104,6 +110,38 @@ func (tester *Rate_tester) Read_forwarders(fname string) {
 	logging.Println(3, nil, "there are", len(tester.resolver_data), "resolvers")
 }
 
+func (tester *Rate_tester) rate_test_target(id int, entry *Resolver_entry) {
+	// create a dns query
+	for entry.moving_avg_rate == 0 || entry.moving_avg_rate > tester.rec_thres*float64(tester.rate_curve[entry.rate_pos]) {
+		t_start := time.Now().UnixMicro()
+		// send for increate_interval ms
+		for time.Now().UnixMicro()-t_start > int64(tester.increase_interval)*1000 {
+			hash := sha256.New()
+			time_bytes := make([]byte, 8)
+			binary.LittleEndian.PutUint64(time_bytes, (uint64)(time.Now().UnixMicro()))
+			hash.Write(time_bytes)
+			domain_prefix := hex.EncodeToString(hash.Sum(nil)[0:4])
+			query_domain := domain_prefix + "." + config.Cfg.Dns_query
+			logging.Println(4, "Sender "+strconv.Itoa(id), "using query domain:", query_domain)
+			query_domain = config.Cfg.Dns_query //TODO remove this later
+			var dnsid uint16 = 0
+			tester.Send_udp_pkt(tester.Build_dns(entry.tfwd_ips[entry.tfwd_pool_pos], layers.UDPPort(entry.outport), dnsid, query_domain))
+			entry.tfwd_pool_pos++
+		}
+		now := time.Now().UnixMicro()
+		// calculate avg receive rate
+		ans_len := len(entry.answer_tss)
+		i := ans_len
+		for ; i >= 0; i-- {
+			if entry.answer_tss[i] < now-int64(tester.increase_interval)*1000 {
+				break
+			}
+		}
+		entry.moving_avg_rate = float64(ans_len-i) / float64(tester.increase_interval)
+	}
+	logging.Println(5, "Sender "+strconv.Itoa(id), "rate too small, quitting")
+}
+
 func (tester *Rate_tester) send_packets(id int) {
 	defer tester.sender_wg.Done()
 	for {
@@ -121,6 +159,7 @@ func (tester *Rate_tester) send_packets(id int) {
 		entry := tester.resolver_data[key]
 		delete(tester.resolver_data, key)
 		outport := tester.current_port
+		entry.outport = (uint16)(outport)
 		tester.current_port++
 		if tester.current_port > uint32(config.Cfg.Port_max) {
 			tester.current_port = uint32(config.Cfg.Port_min)
@@ -128,8 +167,10 @@ func (tester *Rate_tester) send_packets(id int) {
 		tester.active_resolvers[Active_key{port: uint16(outport)}] = entry
 		tester.resolver_counter++
 		tester.resolver_mu.Unlock()
-		// start the rate limit testing to that target
 		logging.Println(4, "Sender "+strconv.Itoa(id), "rate limit testing resolver", tester.resolver_counter, entry.resolver_ip, "on port", outport)
+		// === start the rate limit testing to that target ===
+		tester.rate_test_target(id, entry)
+		break
 		time.Sleep(5 * time.Millisecond)
 	}
 }
@@ -139,12 +180,12 @@ func (tester *Rate_tester) Handle_pkt(pkt gopacket.Packet) {
 }
 
 func (tester *Rate_tester) Start_ratetest() {
-	tester.rate_limit_hard = 5000
-	tester.increase_interval = 1000
+	tester.increase_interval = 1000 // ms
 	tester.resolver_data = make(map[Resolver_key]*Resolver_entry)
 	tester.active_resolvers = make(map[Active_key]*Resolver_entry)
-	tester.rate_curve = []int{50, 100, 150, 200}
+	tester.rate_curve = []int{50, 100, 150, 200} // the rate will increase over time up to a maximum value
 	tester.current_port = uint32(config.Cfg.Port_min)
+	tester.rec_thres = 0.75
 
 	tester.Base_init()
 	tester.Bind_ports()
@@ -159,7 +200,7 @@ func (tester *Rate_tester) Start_ratetest() {
 	go tester.Packet_capture(handle)
 	// start ratelimit senders
 	// TODO config variable
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 1; i++ {
 		tester.sender_wg.Add(1)
 		go tester.send_packets(i)
 	}
