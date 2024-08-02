@@ -36,6 +36,7 @@ type Resolver_entry struct {
 	rate_pos        int           // the current pos in the rate slice aka the current send rate
 	rate_limiter    *rate.Limiter // current rate limiter
 	answer_tss      []int64       // us, answer timestamps, log timestamp of every incoming packet
+	answer_mu       sync.Mutex
 	moving_avg_rate float64
 	outport         uint16
 }
@@ -102,7 +103,7 @@ func (tester *Rate_tester) Read_forwarders(fname string) {
 		if split[csv_response_type] != "Transparent Forwarder" {
 			continue
 		}
-		logging.Println(6, nil, "target-ip:", split[csv_target_ip], "response-ip:", split[csv_response_ip])
+		//logging.Println(6, nil, "target-ip:", split[csv_target_ip], "response-ip:", split[csv_response_ip])
 		// add to resolver map
 		key := Resolver_key{resolver_ip: split[csv_response_ip]}
 		resolver_entry, ok := tester.resolver_data[key]
@@ -149,6 +150,7 @@ func (tester *Rate_tester) rate_test_target(id int, entry *Resolver_entry) {
 			time.Sleep(r.Delay())
 		}
 		entry.calc_last_second_rate(tester)
+		logging.Println(5, "Sender "+strconv.Itoa(id), "last calculated rate is ", entry.moving_avg_rate)
 		// set rate limiter to next value
 		if entry.rate_pos == len(tester.rate_curve)-1 {
 			break
@@ -197,7 +199,50 @@ func (tester *Rate_tester) send_packets(id int) {
 }
 
 func (tester *Rate_tester) Handle_pkt(pkt gopacket.Packet) {
+	logging.Println(6, nil, "INCOMING PACKET")
+	rec_time := time.Now().UnixMicro()
+	ip_layer := pkt.Layer(layers.LayerTypeIPv4)
+	if ip_layer == nil {
+		return
+	}
+	_, ok := ip_layer.(*layers.IPv4)
+	if !ok {
+		return
+	}
 
+	udp_layer := pkt.Layer(layers.LayerTypeUDP)
+	if udp_layer == nil {
+		return
+	}
+	udp, ok := udp_layer.(*layers.UDP)
+	if !ok { // skip wrong packets
+		return
+	}
+	// pkts w/o content will be dropped
+	if pkt.ApplicationLayer() == nil {
+		return
+	}
+
+	logging.Println(6, nil, "received data")
+	// decode as DNS Packet
+	dns := &layers.DNS{}
+	pld := udp.LayerPayload()
+	err := dns.DecodeFromBytes(pld, gopacket.NilDecodeFeedback)
+	if err != nil {
+		logging.Println(5, nil, "DNS not found")
+		return
+	}
+	logging.Println(6, nil, "got DNS response")
+	// check if item in map and assign value
+	rate_entry, ok := tester.active_resolvers[Active_key{port: uint16(udp.DstPort)}]
+	if !ok {
+		logging.Println(4, nil, "got DNS but cant find related resolver")
+		return
+	}
+	rate_entry.answer_mu.Lock()
+	rate_entry.answer_tss = append(rate_entry.answer_tss, rec_time)
+	rate_entry.answer_mu.Unlock()
+	// TODO save some statistics on the DNS answer (correct query answered, size)
 }
 
 func (tester *Rate_tester) Start_ratetest() {
@@ -208,6 +253,7 @@ func (tester *Rate_tester) Start_ratetest() {
 	tester.current_port = uint32(config.Cfg.Port_min)
 	tester.rec_thres = 0.75
 	tester.L2_sender = &tester.L2
+	tester.Base_methods = tester
 
 	tester.Sender_init()
 	tester.Base_init()

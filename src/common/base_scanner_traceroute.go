@@ -140,6 +140,7 @@ func (st *Base) Packet_capture(handle *pcapgo.EthernetHandle) {
 	for {
 		select {
 		case pkt := <-pkt_src:
+			logging.Println(6, nil, "CAPTURED PACKET")
 			go st.Base_methods.Handle_pkt(pkt)
 		case <-st.Stop_chan:
 			logging.Println(3, nil, "stopping packet capture")
