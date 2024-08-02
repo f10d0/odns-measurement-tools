@@ -63,6 +63,19 @@ type Rate_tester struct {
 	rec_thres         float64
 }
 
+func (entry *Resolver_entry) calc_last_second_rate(tester *Rate_tester) {
+	now := time.Now().UnixMicro()
+	// calculate avg receive rate
+	ans_len := len(entry.answer_tss) - 1
+	i := ans_len
+	for ; i >= 0; i-- {
+		if entry.answer_tss[i] < now-int64(tester.increase_interval)*1000 {
+			break
+		}
+	}
+	entry.moving_avg_rate = float64(ans_len-i) / float64(tester.increase_interval)
+}
+
 func (tester *Rate_tester) Read_forwarders(fname string) {
 	logging.Println(3, nil, "reading forwarders from", fname)
 	file, err := os.Open(fname)
@@ -98,7 +111,7 @@ func (tester *Rate_tester) Read_forwarders(fname string) {
 				resolver_ip:  net.ParseIP(split[csv_response_ip]),
 				tfwd_ips:     make([]net.IP, 0),
 				rate_pos:     0,
-				rate_limiter: rate.NewLimiter(rate.Every(0*time.Microsecond), 1),
+				rate_limiter: rate.NewLimiter(rate.Every(time.Duration(1000000/tester.rate_curve[0])*time.Microsecond), 1),
 				answer_tss:   make([]int64, 0),
 			}
 			resolver_entry = tester.resolver_data[key]
@@ -112,34 +125,42 @@ func (tester *Rate_tester) Read_forwarders(fname string) {
 
 func (tester *Rate_tester) rate_test_target(id int, entry *Resolver_entry) {
 	// create a dns query
-	for entry.moving_avg_rate == 0 || entry.moving_avg_rate > tester.rec_thres*float64(tester.rate_curve[entry.rate_pos]) {
+	var dnsid uint16 = 0
+	for entry.moving_avg_rate == 0 && entry.rate_pos == 0 || entry.moving_avg_rate > tester.rec_thres*float64(tester.rate_curve[entry.rate_pos]) {
 		t_start := time.Now().UnixMicro()
 		// send for increate_interval ms
-		for time.Now().UnixMicro()-t_start > int64(tester.increase_interval)*1000 {
+		for time.Now().UnixMicro()-t_start < int64(tester.increase_interval)*1000 {
 			hash := sha256.New()
 			time_bytes := make([]byte, 8)
 			binary.LittleEndian.PutUint64(time_bytes, (uint64)(time.Now().UnixMicro()))
 			hash.Write(time_bytes)
 			domain_prefix := hex.EncodeToString(hash.Sum(nil)[0:4])
 			query_domain := domain_prefix + "." + config.Cfg.Dns_query
-			logging.Println(4, "Sender "+strconv.Itoa(id), "using query domain:", query_domain)
+			logging.Println(6, "Sender "+strconv.Itoa(id), "using query domain:", query_domain)
 			query_domain = config.Cfg.Dns_query //TODO remove this later
-			var dnsid uint16 = 0
+			logging.Println(6, "Sender "+strconv.Itoa(id), "sending dns to", entry.tfwd_ips[entry.tfwd_pool_pos].String(), ", resolver", entry.resolver_ip.String())
 			tester.Send_udp_pkt(tester.Build_dns(entry.tfwd_ips[entry.tfwd_pool_pos], layers.UDPPort(entry.outport), dnsid, query_domain))
-			entry.tfwd_pool_pos++
-		}
-		now := time.Now().UnixMicro()
-		// calculate avg receive rate
-		ans_len := len(entry.answer_tss)
-		i := ans_len
-		for ; i >= 0; i-- {
-			if entry.answer_tss[i] < now-int64(tester.increase_interval)*1000 {
-				break
+			dnsid++
+			entry.tfwd_pool_pos = (entry.tfwd_pool_pos + 1) % len(entry.tfwd_ips)
+			r := entry.rate_limiter.Reserve()
+			if !r.OK() {
+				log.Println("Rate limit exceeded")
 			}
+			time.Sleep(r.Delay())
 		}
-		entry.moving_avg_rate = float64(ans_len-i) / float64(tester.increase_interval)
+		entry.calc_last_second_rate(tester)
+		// set rate limiter to next value
+		if entry.rate_pos == len(tester.rate_curve)-1 {
+			break
+		}
+		entry.rate_pos++
+		logging.Println(5, "Sender "+strconv.Itoa(id), "rate up", tester.rate_curve[entry.rate_pos], "Pkts/s")
+		entry.rate_limiter.SetLimit(rate.Every(time.Duration(1000000/tester.rate_curve[entry.rate_pos]) * time.Microsecond))
 	}
 	logging.Println(5, "Sender "+strconv.Itoa(id), "rate too small, quitting")
+	// calc final rate
+	entry.calc_last_second_rate(tester)
+	logging.Println(5, "Sender "+strconv.Itoa(id), "final rate:", entry.moving_avg_rate)
 }
 
 func (tester *Rate_tester) send_packets(id int) {
@@ -171,7 +192,7 @@ func (tester *Rate_tester) send_packets(id int) {
 		// === start the rate limit testing to that target ===
 		tester.rate_test_target(id, entry)
 		break
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 
@@ -186,7 +207,9 @@ func (tester *Rate_tester) Start_ratetest() {
 	tester.rate_curve = []int{50, 100, 150, 200} // the rate will increase over time up to a maximum value
 	tester.current_port = uint32(config.Cfg.Port_min)
 	tester.rec_thres = 0.75
+	tester.L2_sender = &tester.L2
 
+	tester.Sender_init()
 	tester.Base_init()
 	tester.Bind_ports()
 
