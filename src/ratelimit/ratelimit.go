@@ -9,10 +9,12 @@ import (
 	"dns_tools/config"
 	"dns_tools/logging"
 	"encoding/binary"
+	"encoding/csv"
 	"encoding/hex"
 	"log"
 	"net"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -54,15 +56,16 @@ type Rate_tester struct {
 	common.Base
 	udp_common.Udp_binder
 	udp_common.Udp_sender
-	resolver_data     map[Resolver_key]*Resolver_entry
-	resolver_mu       sync.Mutex
-	active_resolvers  map[Active_key]*Resolver_entry
-	sender_wg         sync.WaitGroup
-	increase_interval int // time delay between rate increases [ms]
-	rate_curve        []int
-	current_port      uint32
-	resolver_counter  int
-	rec_thres         float64
+	resolver_data      map[Resolver_key]*Resolver_entry
+	resolver_mu        sync.Mutex
+	active_resolvers   map[Active_key]*Resolver_entry
+	finished_resolvers chan *Resolver_entry
+	sender_wg          sync.WaitGroup
+	increase_interval  int // time delay between rate increases [ms]
+	rate_curve         []int
+	current_port       uint32
+	resolver_counter   int
+	rec_thres          float64
 }
 
 func (entry *Resolver_entry) calc_last_second_rate(tester *Rate_tester) {
@@ -77,6 +80,30 @@ func (entry *Resolver_entry) calc_last_second_rate(tester *Rate_tester) {
 	}
 	entry.moving_avg_rate = float64(ans_len-i) / float64(tester.increase_interval) * 1000
 	entry.max_rate = common.Max(entry.max_rate, entry.moving_avg_rate)
+}
+
+func (tester *Rate_tester) write_results(out_path string) {
+	os.MkdirAll(out_path, os.ModePerm)
+	for {
+		select {
+		case entry := <-tester.finished_resolvers:
+			csvfile, err := os.Create(path.Join(out_path, entry.resolver_ip.String()+".csv.gz"))
+			if err != nil {
+				panic(err)
+			}
+			zip_writer := gzip.NewWriter(csvfile)
+
+			logging.Println(5, nil, "fancy writing action for", entry.resolver_ip)
+
+			csv_writer := csv.NewWriter(zip_writer)
+			csv_writer.Comma = ';'
+			csv_writer.Flush()
+			zip_writer.Close()
+			csvfile.Close()
+		case <-tester.Stop_chan:
+			return
+		}
+	}
 }
 
 func (tester *Rate_tester) Read_forwarders(fname string) {
@@ -129,7 +156,7 @@ func (tester *Rate_tester) Read_forwarders(fname string) {
 func (tester *Rate_tester) rate_test_target(id int, entry *Resolver_entry) {
 	// create a dns query
 	var dnsid uint16 = 0
-	for entry.moving_avg_rate == 0 && entry.rate_pos == 0 || entry.moving_avg_rate > tester.rec_thres*float64(tester.rate_curve[entry.rate_pos-1]) {
+	for {
 		t_start := time.Now().UnixMicro()
 		// send for increate_interval ms
 		for time.Now().UnixMicro()-t_start < int64(tester.increase_interval)*1000 {
@@ -158,12 +185,13 @@ func (tester *Rate_tester) rate_test_target(id int, entry *Resolver_entry) {
 			logging.Println(5, "Sender "+strconv.Itoa(id), "rate curve exhausted")
 			break
 		}
+		if entry.moving_avg_rate < tester.rec_thres*float64(tester.rate_curve[entry.rate_pos]) {
+			logging.Println(5, "Sender "+strconv.Itoa(id), "receiving rate too small, quitting")
+			break
+		}
 		entry.rate_pos++
 		logging.Println(5, "Sender "+strconv.Itoa(id), "rate up", tester.rate_curve[entry.rate_pos], "Pkts/s")
 		entry.rate_limiter.SetLimit(rate.Every(time.Duration(1000000/tester.rate_curve[entry.rate_pos]) * time.Microsecond))
-	}
-	if entry.rate_pos < len(tester.rate_curve)-1 {
-		logging.Println(5, "Sender "+strconv.Itoa(id), "receiving rate too small, quitting")
 	}
 	// calc final rate
 	entry.calc_last_second_rate(tester)
@@ -194,14 +222,17 @@ func (tester *Rate_tester) send_packets(id int) {
 		if tester.current_port > uint32(config.Cfg.Port_max) {
 			tester.current_port = uint32(config.Cfg.Port_min)
 		}
-		tester.active_resolvers[Active_key{port: uint16(outport)}] = entry
+		act_key := Active_key{port: uint16(outport)}
+		tester.active_resolvers[act_key] = entry
 		tester.resolver_counter++
 		tester.resolver_mu.Unlock()
 		logging.Println(4, "Sender "+strconv.Itoa(id), "rate limit testing resolver", tester.resolver_counter, entry.resolver_ip, "on port", outport)
 		// === start the rate limit testing to that target ===
 		tester.rate_test_target(id, entry)
-		break
+		tester.finished_resolvers <- entry
+		delete(tester.active_resolvers, act_key)
 		time.Sleep(50 * time.Millisecond)
+		break
 	}
 }
 
@@ -242,7 +273,7 @@ func (tester *Rate_tester) Handle_pkt(pkt gopacket.Packet) {
 	// check if item in map and assign value
 	rate_entry, ok := tester.active_resolvers[Active_key{port: uint16(udp.DstPort)}]
 	if !ok {
-		logging.Println(4, nil, "got DNS but cant find related resolver")
+		logging.Println(6, nil, "got DNS but cant find related resolver")
 		return
 	}
 	rate_entry.answer_mu.Lock()
@@ -260,6 +291,7 @@ func (tester *Rate_tester) Start_ratetest() {
 	tester.rec_thres = 0.75
 	tester.L2_sender = &tester.L2
 	tester.Base_methods = tester
+	tester.finished_resolvers = make(chan *Resolver_entry, 128)
 
 	tester.Sender_init()
 	tester.Base_init()
@@ -273,6 +305,8 @@ func (tester *Rate_tester) Start_ratetest() {
 	handle := common.Get_ether_handle("udp")
 	tester.Wg.Add(1)
 	go tester.Packet_capture(handle)
+	// path to an output directory, each resolver will be written to its own file
+	go tester.write_results("ratelimit_results") //TODO config var
 	// start ratelimit senders
 	// TODO config variable
 	for i := 0; i < 1; i++ {
