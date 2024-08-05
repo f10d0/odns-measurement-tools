@@ -38,6 +38,7 @@ type Resolver_entry struct {
 	answer_tss      []int64       // us, answer timestamps, log timestamp of every incoming packet
 	answer_mu       sync.Mutex
 	moving_avg_rate float64
+	max_rate        float64
 	outport         uint16
 }
 
@@ -74,7 +75,8 @@ func (entry *Resolver_entry) calc_last_second_rate(tester *Rate_tester) {
 			break
 		}
 	}
-	entry.moving_avg_rate = float64(ans_len-i) / float64(tester.increase_interval)
+	entry.moving_avg_rate = float64(ans_len-i) / float64(tester.increase_interval) * 1000
+	entry.max_rate = common.Max(entry.max_rate, entry.moving_avg_rate)
 }
 
 func (tester *Rate_tester) Read_forwarders(fname string) {
@@ -127,7 +129,7 @@ func (tester *Rate_tester) Read_forwarders(fname string) {
 func (tester *Rate_tester) rate_test_target(id int, entry *Resolver_entry) {
 	// create a dns query
 	var dnsid uint16 = 0
-	for entry.moving_avg_rate == 0 && entry.rate_pos == 0 || entry.moving_avg_rate > tester.rec_thres*float64(tester.rate_curve[entry.rate_pos]) {
+	for entry.moving_avg_rate == 0 && entry.rate_pos == 0 || entry.moving_avg_rate > tester.rec_thres*float64(tester.rate_curve[entry.rate_pos-1]) {
 		t_start := time.Now().UnixMicro()
 		// send for increate_interval ms
 		for time.Now().UnixMicro()-t_start < int64(tester.increase_interval)*1000 {
@@ -153,16 +155,21 @@ func (tester *Rate_tester) rate_test_target(id int, entry *Resolver_entry) {
 		logging.Println(5, "Sender "+strconv.Itoa(id), "last calculated rate is ", entry.moving_avg_rate)
 		// set rate limiter to next value
 		if entry.rate_pos == len(tester.rate_curve)-1 {
+			logging.Println(5, "Sender "+strconv.Itoa(id), "rate curve exhausted")
 			break
 		}
 		entry.rate_pos++
 		logging.Println(5, "Sender "+strconv.Itoa(id), "rate up", tester.rate_curve[entry.rate_pos], "Pkts/s")
 		entry.rate_limiter.SetLimit(rate.Every(time.Duration(1000000/tester.rate_curve[entry.rate_pos]) * time.Microsecond))
 	}
-	logging.Println(5, "Sender "+strconv.Itoa(id), "rate too small, quitting")
+	if entry.rate_pos < len(tester.rate_curve)-1 {
+		logging.Println(5, "Sender "+strconv.Itoa(id), "receiving rate too small, quitting")
+	}
 	// calc final rate
 	entry.calc_last_second_rate(tester)
-	logging.Println(5, "Sender "+strconv.Itoa(id), "final rate:", entry.moving_avg_rate)
+	logging.Println(4, "Sender "+strconv.Itoa(id), "final avg rate for ", entry.resolver_ip, "is", entry.moving_avg_rate, "Pkts/s")
+	logging.Println(4, "Sender "+strconv.Itoa(id), "max rate for ", entry.resolver_ip, "is", entry.max_rate, "Pkts/s")
+	// TODO test stability at max rate
 }
 
 func (tester *Rate_tester) send_packets(id int) {
@@ -171,7 +178,7 @@ func (tester *Rate_tester) send_packets(id int) {
 		tester.resolver_mu.Lock()
 		if len(tester.resolver_data) == 0 {
 			tester.resolver_mu.Unlock()
-			logging.Println(4, "Sender "+strconv.Itoa(id), "List exhausted, returning")
+			logging.Println(4, "Sender "+strconv.Itoa(id), "list exhausted, returning")
 			return
 		}
 		// retrieve the next resolver from the map
@@ -199,7 +206,6 @@ func (tester *Rate_tester) send_packets(id int) {
 }
 
 func (tester *Rate_tester) Handle_pkt(pkt gopacket.Packet) {
-	logging.Println(6, nil, "INCOMING PACKET")
 	rec_time := time.Now().UnixMicro()
 	ip_layer := pkt.Layer(layers.LayerTypeIPv4)
 	if ip_layer == nil {
@@ -246,10 +252,10 @@ func (tester *Rate_tester) Handle_pkt(pkt gopacket.Packet) {
 }
 
 func (tester *Rate_tester) Start_ratetest() {
-	tester.increase_interval = 1000 // ms
+	tester.increase_interval = 2000 // ms
 	tester.resolver_data = make(map[Resolver_key]*Resolver_entry)
 	tester.active_resolvers = make(map[Active_key]*Resolver_entry)
-	tester.rate_curve = []int{50, 100, 150, 200} // the rate will increase over time up to a maximum value
+	tester.rate_curve = []int{50, 100, 150, 200, 400, 600, 1000, 1500, 2000, 2500} // the rate will increase over time up to a maximum value
 	tester.current_port = uint32(config.Cfg.Port_min)
 	tester.rec_thres = 0.75
 	tester.L2_sender = &tester.L2

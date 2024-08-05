@@ -63,3 +63,10 @@ func Get_ether_handle(prot string) *pcapgo.EthernetHandle {
 	}
 	return handle
 }
+
+func Max(a float64, b float64) float64 {
+	if a > b {
+		return a
+	}
+	return b
+}
