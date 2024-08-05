@@ -278,6 +278,7 @@ func (tester *Rate_tester) Start_ratetest() {
 
 	time.Sleep(5 * time.Second)
 	close(tester.Stop_chan)
+	handle.Close()
 
 	tester.Wg.Wait()
 	tester.Unbind_ports()
