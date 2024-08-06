@@ -158,7 +158,10 @@ func main() {
 			fallthrough
 		case "ratelimit":
 			var rate_tester ratelimit.Rate_tester
-			rate_tester.Start_ratetest()
+			if *outpath == "" {
+				*outpath = "ratelimit_results"
+			}
+			rate_tester.Start_ratetest(flag.Args(), *outpath)
 		default:
 			fmt.Println("wrong mode:", *mode_flag)
 			os.Exit(int(common.WRONG_INPUT_ARGS))

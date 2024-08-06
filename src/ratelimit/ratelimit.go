@@ -31,13 +31,18 @@ const (
 	csv_response_type int = 4
 )
 
+type Answer_entry struct {
+	ts               int64
+	dns_payload_size int
+}
+
 type Resolver_entry struct {
 	resolver_ip     net.IP
 	tfwd_ips        []net.IP // ip pool
 	tfwd_pool_pos   int
-	rate_pos        int           // the current pos in the rate slice aka the current send rate
-	rate_limiter    *rate.Limiter // current rate limiter
-	answer_tss      []int64       // us, answer timestamps, log timestamp of every incoming packet
+	rate_pos        int            // the current pos in the rate slice aka the current send rate
+	rate_limiter    *rate.Limiter  // current rate limiter
+	answer_data     []Answer_entry // us, answer timestamps, log timestamp of every incoming packet
 	answer_mu       sync.Mutex
 	moving_avg_rate float64
 	max_rate        float64
@@ -71,10 +76,10 @@ type Rate_tester struct {
 func (entry *Resolver_entry) calc_last_second_rate(tester *Rate_tester) {
 	now := time.Now().UnixMicro()
 	// calculate avg receive rate
-	ans_len := len(entry.answer_tss) - 1
+	ans_len := len(entry.answer_data) - 1
 	i := ans_len
 	for ; i >= 0; i-- {
-		if entry.answer_tss[i] < now-int64(tester.increase_interval)*1000 {
+		if entry.answer_data[i].ts < now-int64(tester.increase_interval)*1000 {
 			break
 		}
 	}
@@ -92,11 +97,28 @@ func (tester *Rate_tester) write_results(out_path string) {
 				panic(err)
 			}
 			zip_writer := gzip.NewWriter(csvfile)
-
-			logging.Println(5, nil, "fancy writing action for", entry.resolver_ip)
-
 			csv_writer := csv.NewWriter(zip_writer)
 			csv_writer.Comma = ';'
+
+			logging.Println(5, nil, "writing entry for resolver", entry.resolver_ip)
+			var record []string
+			// === csv format ===
+			// line 1: resolver_ip, max_rate, avg_rate
+			record = append(record, entry.resolver_ip.String())
+			record = append(record, strconv.Itoa(int(entry.max_rate)))
+			record = append(record, strconv.Itoa(int(entry.moving_avg_rate)))
+			csv_writer.Write(record)
+			// line 2: ts 1?
+			// line 3: ts 2
+			// ...
+			// line n: ts n
+			for _, ans_entry := range entry.answer_data {
+				record = make([]string, 2)
+				record[0] = strconv.FormatInt(ans_entry.ts, 10)
+				record[1] = strconv.Itoa(ans_entry.dns_payload_size)
+				csv_writer.Write(record)
+			}
+
 			csv_writer.Flush()
 			zip_writer.Close()
 			csvfile.Close()
@@ -142,7 +164,7 @@ func (tester *Rate_tester) Read_forwarders(fname string) {
 				tfwd_ips:     make([]net.IP, 0),
 				rate_pos:     0,
 				rate_limiter: rate.NewLimiter(rate.Every(time.Duration(1000000/tester.rate_curve[0])*time.Microsecond), 1),
-				answer_tss:   make([]int64, 0),
+				answer_data:  make([]Answer_entry, 0),
 			}
 			resolver_entry = tester.resolver_data[key]
 		}
@@ -160,14 +182,18 @@ func (tester *Rate_tester) rate_test_target(id int, entry *Resolver_entry) {
 		t_start := time.Now().UnixMicro()
 		// send for increate_interval ms
 		for time.Now().UnixMicro()-t_start < int64(tester.increase_interval)*1000 {
-			hash := sha256.New()
-			time_bytes := make([]byte, 8)
-			binary.LittleEndian.PutUint64(time_bytes, (uint64)(time.Now().UnixMicro()))
-			hash.Write(time_bytes)
-			domain_prefix := hex.EncodeToString(hash.Sum(nil)[0:4])
-			query_domain := domain_prefix + "." + config.Cfg.Dns_query
-			logging.Println(6, "Sender "+strconv.Itoa(id), "using query domain:", query_domain)
-			query_domain = config.Cfg.Dns_query //TODO remove this later
+			var query_domain string
+			if config.Cfg.Dynamic_domain {
+				hash := sha256.New()
+				time_bytes := make([]byte, 8)
+				binary.LittleEndian.PutUint64(time_bytes, (uint64)(time.Now().UnixMicro()))
+				hash.Write(time_bytes)
+				domain_prefix := hex.EncodeToString(hash.Sum(nil)[0:4])
+				query_domain = domain_prefix + "." + config.Cfg.Dns_query
+				logging.Println(6, "Sender "+strconv.Itoa(id), "using query domain:", query_domain)
+			} else {
+				query_domain = config.Cfg.Dns_query
+			}
 			logging.Println(6, "Sender "+strconv.Itoa(id), "sending dns to", entry.tfwd_ips[entry.tfwd_pool_pos].String(), ", resolver", entry.resolver_ip.String())
 			tester.Send_udp_pkt(tester.Build_dns(entry.tfwd_ips[entry.tfwd_pool_pos], layers.UDPPort(entry.outport), dnsid, query_domain))
 			dnsid++
@@ -232,7 +258,6 @@ func (tester *Rate_tester) send_packets(id int) {
 		tester.finished_resolvers <- entry
 		delete(tester.active_resolvers, act_key)
 		time.Sleep(50 * time.Millisecond)
-		break
 	}
 }
 
@@ -277,12 +302,15 @@ func (tester *Rate_tester) Handle_pkt(pkt gopacket.Packet) {
 		return
 	}
 	rate_entry.answer_mu.Lock()
-	rate_entry.answer_tss = append(rate_entry.answer_tss, rec_time)
+	ans_entry := Answer_entry{
+		ts:               rec_time,
+		dns_payload_size: len(dns.Payload()),
+	}
+	rate_entry.answer_data = append(rate_entry.answer_data, ans_entry)
 	rate_entry.answer_mu.Unlock()
-	// TODO save some statistics on the DNS answer (correct query answered, size)
 }
 
-func (tester *Rate_tester) Start_ratetest() {
+func (tester *Rate_tester) Start_ratetest(args []string, outpath string) {
 	tester.increase_interval = 2000 // ms
 	tester.resolver_data = make(map[Resolver_key]*Resolver_entry)
 	tester.active_resolvers = make(map[Active_key]*Resolver_entry)
@@ -297,19 +325,19 @@ func (tester *Rate_tester) Start_ratetest() {
 	tester.Base_init()
 	tester.Bind_ports()
 
-	// TODO config variable
-	fname := "intersect_out.csv.gz"
-	tester.Read_forwarders(fname)
+	if len(args) < 1 {
+		logging.Println(1, nil, "missing intersect input file")
+	}
+	tester.Read_forwarders(args[0])
 
 	// packet capture will call Handle_pkt
 	handle := common.Get_ether_handle("udp")
 	tester.Wg.Add(1)
 	go tester.Packet_capture(handle)
 	// path to an output directory, each resolver will be written to its own file
-	go tester.write_results("ratelimit_results") //TODO config var
+	go tester.write_results(outpath)
 	// start ratelimit senders
-	// TODO config variable
-	for i := 0; i < 1; i++ {
+	for i := 0; i < int(config.Cfg.Number_routines); i++ {
 		tester.sender_wg.Add(1)
 		go tester.send_packets(i)
 	}

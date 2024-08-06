@@ -21,6 +21,7 @@ type cfg_db struct {
 	Port_reuse_timeout int    `yaml:"port_reuse_timeout"`
 	Number_routines    uint16 `yaml:"no_of_routines"`
 	Craft_ethernet     bool
+	Dynamic_domain   bool `yaml:"dynamic_domain"`
 }
 
 var Cfg cfg_db
