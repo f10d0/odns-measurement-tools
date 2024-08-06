@@ -88,6 +88,8 @@ func (entry *Resolver_entry) calc_last_second_rate(tester *Rate_tester) {
 }
 
 func (tester *Rate_tester) write_results(out_path string) {
+	formatted_ts := time.Now().UTC().Format("2006-01-02_15-04-05")
+	out_path = path.Join(out_path, formatted_ts)
 	os.MkdirAll(out_path, os.ModePerm)
 	for {
 		select {
@@ -306,7 +308,7 @@ func (tester *Rate_tester) Handle_pkt(pkt gopacket.Packet) {
 	rate_entry.answer_mu.Lock()
 	ans_entry := Answer_entry{
 		ts:               rec_time,
-		dns_payload_size: len(dns.Payload()),
+		dns_payload_size: len(dns.LayerPayload()),
 	}
 	rate_entry.answer_data = append(rate_entry.answer_data, ans_entry)
 	rate_entry.answer_mu.Unlock()
@@ -316,7 +318,18 @@ func (tester *Rate_tester) Start_ratetest(args []string, outpath string) {
 	tester.increase_interval = 2000 // ms
 	tester.resolver_data = make(map[Resolver_key]*Resolver_entry)
 	tester.active_resolvers = make(map[Active_key]*Resolver_entry)
-	tester.rate_curve = []int{50, 100, 150, 200, 400, 600, 1000, 1500, 2000, 2500} // the rate will increase over time up to a maximum value
+	// load rate curve from config
+	// the rate will increase over time up to a maximum value
+	var rate_values []string = strings.Split(config.Cfg.Rate_curve, ",")
+	tester.rate_curve = make([]int, 0)
+	for _, rate_value := range rate_values {
+		rate_val_int, err := strconv.Atoi(rate_value)
+		if err != nil {
+			logging.Println(1, nil, "cannot convert value in rate curve to int")
+			return
+		}
+		tester.rate_curve = append(tester.rate_curve, rate_val_int)
+	}
 	tester.current_port = uint32(config.Cfg.Port_min)
 	tester.rec_thres = 0.75
 	tester.L2_sender = &tester.L2
