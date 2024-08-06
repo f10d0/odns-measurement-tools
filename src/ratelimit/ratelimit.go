@@ -258,7 +258,9 @@ func (tester *Rate_tester) send_packets(id int) {
 		// === start the rate limit testing to that target ===
 		tester.rate_test_target(id, entry)
 		tester.finished_resolvers <- entry
+		tester.resolver_mu.Lock()
 		delete(tester.active_resolvers, act_key)
+		tester.resolver_mu.Unlock()
 		time.Sleep(50 * time.Millisecond)
 	}
 }
