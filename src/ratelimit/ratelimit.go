@@ -296,7 +296,9 @@ func (tester *Rate_tester) Handle_pkt(pkt gopacket.Packet) {
 	}
 	logging.Println(6, nil, "got DNS response")
 	// check if item in map and assign value
+	tester.resolver_mu.Lock()
 	rate_entry, ok := tester.active_resolvers[Active_key{port: uint16(udp.DstPort)}]
+	tester.resolver_mu.Unlock()
 	if !ok {
 		logging.Println(6, nil, "got DNS but cant find related resolver")
 		return
