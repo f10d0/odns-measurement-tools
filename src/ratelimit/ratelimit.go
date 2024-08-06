@@ -323,13 +323,14 @@ func (tester *Rate_tester) Start_ratetest(args []string, outpath string) {
 	var rate_values []string = strings.Split(config.Cfg.Rate_curve, ",")
 	tester.rate_curve = make([]int, 0)
 	for _, rate_value := range rate_values {
-		rate_val_int, err := strconv.Atoi(rate_value)
+		rate_val_int, err := strconv.Atoi(strings.Trim(rate_value, " "))
 		if err != nil {
 			logging.Println(1, nil, "cannot convert value in rate curve to int")
 			return
 		}
 		tester.rate_curve = append(tester.rate_curve, rate_val_int)
 	}
+	logging.Println(4, nil, "rate curve:", tester.rate_curve)
 	tester.current_port = uint32(config.Cfg.Port_min)
 	tester.rec_thres = 0.75
 	tester.L2_sender = &tester.L2
