@@ -308,7 +308,7 @@ func (tester *Rate_tester) Handle_pkt(pkt gopacket.Packet) {
 	rate_entry.answer_mu.Lock()
 	ans_entry := Answer_entry{
 		ts:               rec_time,
-		dns_payload_size: len(dns.LayerPayload()),
+		dns_payload_size: len(pld),
 	}
 	rate_entry.answer_data = append(rate_entry.answer_data, ans_entry)
 	rate_entry.answer_mu.Unlock()
