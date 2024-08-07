@@ -196,6 +196,8 @@ func (tester *Rate_tester) rate_test_target(id int, entry *Resolver_entry) {
 			} else {
 				query_domain = config.Cfg.Dns_query
 			}
+			//TODO check if ip on blocklist
+			// entry.tfwd_ips[entry.tfwd_pool_pos]
 			logging.Println(6, "Sender "+strconv.Itoa(id), "sending dns to", entry.tfwd_ips[entry.tfwd_pool_pos].String(), ", resolver", entry.resolver_ip.String())
 			tester.Send_udp_pkt(tester.Build_dns(entry.tfwd_ips[entry.tfwd_pool_pos], layers.UDPPort(entry.outport), dnsid, query_domain))
 			dnsid++

@@ -37,3 +37,6 @@ echo "there are $(cat $scan_output_file | wc -l) public resolvers"
 echo "determining cross section of public and restrictive resolvers"
 source .venv/bin/activate
 python ratelimit/intersect.py $scan_output_file $input_file $intersect_out
+
+echo "starting ratelimit testing"
+sudo go run dns_tool.go -m r -v 5 -c ratelimit/config.yml $intersect_out
