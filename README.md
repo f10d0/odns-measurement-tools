@@ -10,24 +10,24 @@ Regular scan results are published under http://odns.secnow.net
 
 # Usage
 ```
-  -help
-    	Display help
   -c, --config [string]
     	Path to configuration file
-  -m, --mode [string]
-    	available modes: (s)scan, (t)trace,traceroute
-  -p, --protocol [string]
-    	available protocols: tcp, udp
-  -v, --verbose [int]
-    	overwrites the debug level set in the config (default -1)
   -e, --ethernet
     	dns_tool will manually craft the ethernet header
+  --help
+    	Display help
+  -m, --mode [string]
+    	available modes: <(s|scan) | (t|trace|traceroute) | (r|rate|ratelimit)>
   -o, --out [string]
     	output file path
   --profile
     	enable cpu profiling (output file: cpu.prof)
+  -p, --protocol [string]
+    	available protocols: tcp, udp
   -r --rate [int]
-    	overwrites packet rate in pkt/s, -1 for unlimited (default -2)
+    	overwrites packet rate set in the config in pkt/s, -1 for unlimited (default -2)
+  -v, --verbose [int]
+    	overwrites the debug level set in the config (default -1, 1-6)
 ```
 
 ## DNS over TCP
@@ -45,7 +45,8 @@ sudo iptables -A OUTPUT -p tcp --tcp-flags RST RST -j DROP
 
 **Run the scan:**
 ```
-sudo go run dns_tool.go --mode scan --protocol tcp --config src/scanner/tcp/config.yml <net-to-scan-in-CIDR|filename-of-ip-list>
+cd src
+sudo go run dns_tool.go --mode scan --protocol tcp --config scanner/tcp/config.yml <net-to-scan-in-CIDR|filename-of-ip-list>
 ```
 
 Results are written to `tcp_results.csv.gz`
@@ -68,7 +69,8 @@ The port range can also be specified in the config. By default the range lies ou
 
 **Run the scan:**
 ```
-sudo go run dns_tool.go --mode scan --protocol udp --config src/scanner/udp/config.yml [net-to-scan-in-CIDR|filename-of-ip-list]
+cd src
+sudo go run dns_tool.go --mode scan --protocol udp --config scanner/udp/config.yml [net-to-scan-in-CIDR|filename-of-ip-list]
 ```
 
 Results are written to `udp_results.csv.gz`
@@ -93,5 +95,18 @@ As soon as a SYN/ACK arrives, the tool starts to send DNS requests over TCP with
 
 **Run the traceroute**
 ```
+cd src
 sudo go run dns_tool.go --mode traceroute --protocol tcp [target-ip|path-to-list-of-ips]
 ```
+
+## DNS Ratelimit Testing
+
+**Run the test**\
+This requires:
+- `scanner/udp/config_uniq.yml` with a reduced scan rate
+- `ratelimit/config.yml` specifying a `rate_curve` and `dynamic_domain` (see ratelimit/config.yml.template)
+```
+cd src
+sudo ratelimit/check_pub_resolvers.sh [in: last udp scan] [out: intermediate resolver scan file] [out: intersect file]
+```
+Results will be in `ratelimit_results/<timestamp>/`
