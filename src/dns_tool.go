@@ -146,6 +146,7 @@ func main() {
 			switch *prot_flag {
 			case "tcp":
 				fmt.Println("starting tcp traceroute")
+				logging.Runlog_prefix = "TCP-Traceroute"
 				var tcp_traceroute traceroute_tcp.Tcp_traceroute
 				tcp_traceroute.Start_traceroute(flag.Args())
 			default:
@@ -161,6 +162,8 @@ func main() {
 			if *outpath == "" {
 				*outpath = "ratelimit_results"
 			}
+			fmt.Println("starting ratelimit testing")
+			logging.Runlog_prefix = "Ratelimit"
 			rate_tester.Start_ratetest(flag.Args(), *outpath)
 		default:
 			fmt.Println("wrong mode:", *mode_flag)

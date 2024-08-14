@@ -37,10 +37,11 @@ type IScanner_Methods interface {
 
 type Base_scanner struct {
 	common.Base
-	Blocked_nets    []*net.IPNet
-	Write_chan      chan *Scan_data_item
-	Scan_data       root_scan_data
-	Scanner_methods IScanner_Methods
+	Blocked_nets         []*net.IPNet
+	Write_chan           chan *Scan_data_item
+	Scan_data            root_scan_data
+	Result_data_internal []Scan_data_item
+	Scanner_methods      IScanner_Methods
 }
 
 func (bs *Base_scanner) Scanner_init() {
@@ -50,6 +51,7 @@ func (bs *Base_scanner) Scanner_init() {
 	bs.Scan_data = root_scan_data{
 		Items: make(map[scan_item_key]Scan_data_item),
 	}
+	bs.Result_data_internal = make([]Scan_data_item, 0)
 
 	go bs.Handle_ctrl_c()
 	bs.Exclude_ips()
@@ -74,6 +76,18 @@ func (bs *Base_scanner) Write_results(out_path string) {
 		select {
 		case scan_item := <-bs.Write_chan:
 			bs.Scanner_methods.Write_item(scan_item)
+		case <-bs.Stop_chan:
+			return
+		}
+	}
+}
+
+func (bs *Base_scanner) Store_internal() {
+	defer bs.Wg.Done()
+	for {
+		select {
+		case scan_item := <-bs.Write_chan:
+			bs.Result_data_internal = append(bs.Result_data_internal, *scan_item)
 		case <-bs.Stop_chan:
 			return
 		}

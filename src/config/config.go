@@ -7,7 +7,7 @@ import (
 )
 
 // config
-type cfg_db struct {
+type Cfg_db struct {
 	Iface_name     string `yaml:"iface_name"`
 	Iface_ip       string `yaml:"iface_ip"`
 	Dst_port       uint16 `yaml:"dst_port"`
@@ -23,9 +23,13 @@ type cfg_db struct {
 	Craft_ethernet     bool   `yaml:"craft_ethernet"`
 	Dynamic_domain     bool   `yaml:"dynamic_domain"`
 	Rate_curve         string `yaml:"rate_curve"`
+	// rate modes may be: < probe | direct >
+	//  - probe will check the entire /24 net of the transparent fwds from the intersect file for (further) active fwds
+	//  - direct will only use the specified addresses
+	Rate_mode string `yaml:"rate_mode"`
 }
 
-var Cfg cfg_db
+var Cfg Cfg_db
 
 func Load_config(config_path string) {
 	err := cleanenv.ReadConfig(config_path, &Cfg)

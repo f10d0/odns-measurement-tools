@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"math/rand"
+
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 )
@@ -55,7 +57,7 @@ func (udps *Udp_scanner) update_sync_init() (uint32, uint16, uint16) {
 }
 
 // this struct contains all relevant data to track the dns query & response
-type udp_scan_data_item struct {
+type Udp_scan_data_item struct {
 	id       uint32
 	ts       time.Time
 	ip       net.IP
@@ -65,7 +67,7 @@ type udp_scan_data_item struct {
 	dns_recs []net.IP
 }
 
-func (u *udp_scan_data_item) Get_timestamp() time.Time {
+func (u *Udp_scan_data_item) Get_timestamp() time.Time {
 	return u.ts
 }
 
@@ -76,7 +78,7 @@ type udp_scan_item_key struct {
 }
 
 func (udps *Udp_scanner) Write_item(scan_item *scanner.Scan_data_item) {
-	udp_scan_item, ok := (*scan_item).(*udp_scan_data_item)
+	udp_scan_item, ok := (*scan_item).(*Udp_scan_data_item)
 	if !ok {
 		return
 	}
@@ -87,7 +89,7 @@ func (udps *Udp_scanner) Write_item(scan_item *scanner.Scan_data_item) {
 	udps.Scan_data.Mu.Unlock()
 }
 
-func scan_item_to_strarr(scan_item *udp_scan_data_item) []string {
+func scan_item_to_strarr(scan_item *Udp_scan_data_item) []string {
 	// csv format: id;target_ip;response_ip;arecords;timestamp;port;dnsid
 	// transform scan_item into string array for csv writer
 	var record []string
@@ -113,7 +115,7 @@ func (udps *Udp_scanner) send_dns(id uint32, dst_ip net.IP, src_port layers.UDPP
 	logging.Println(6, nil, dst_ip, "port=", src_port, "dnsid=", dnsid)
 	// check for sequence number collisions
 	udps.Scan_data.Mu.Lock()
-	s_d_item := udp_scan_data_item{
+	s_d_item := Udp_scan_data_item{
 		id:       id,
 		ts:       time.Now(),
 		ip:       dst_ip,
@@ -165,7 +167,7 @@ func (udps *Udp_scanner) Handle_pkt(pkt gopacket.Packet) {
 		if !ok {
 			return
 		}
-		udp_scan_item, ok := scan_item.(*udp_scan_data_item)
+		udp_scan_item, ok := scan_item.(*Udp_scan_data_item)
 		if !ok {
 			log.Fatal("cast failed, wrong type")
 		}
@@ -220,20 +222,42 @@ func (udps *Udp_scanner) init_udp() {
 	}
 }
 
-func (udps *Udp_scanner) gen_ips(netip net.IP, hostsize int) {
-	defer udps.Wg.Done()
+func (udps *Udp_scanner) gen_ips(netip net.IP, hostsize int) bool {
 	netip_int := generator.Ip42uint32(netip)
 	var lcg_ipv4 generator.Lcg
 	lcg_ipv4.Init(int(math.Pow(2, float64(hostsize))))
 	for lcg_ipv4.Has_next() {
 		select {
 		case <-udps.Stop_chan:
-			return
+			return false
 		default:
 			val := lcg_ipv4.Next()
 			udps.Ip_chan <- generator.Uint322ip(netip_int + uint32(val))
 		}
 	}
+	return true
+}
+
+func (udps *Udp_scanner) gen_ips_nets(nets []net.IP, hostsize int) {
+	defer udps.Wg.Done()
+	var start_len = len(nets)
+	// generate ips for all the given nets
+	for i := 0; i < start_len; i++ {
+		if !udps.gen_ips(nets[rand.Intn(len(nets))], hostsize) {
+			return
+		}
+	}
+	var wait_time int = len(udps.Ip_chan)/config.Cfg.Pkts_per_sec + 10
+	logging.Println(3, nil, "all ips generated, waiting", wait_time, "seconds to end")
+	udps.Waiting_to_end = true
+	// time to wait until end based on packet rate + channel size
+	time.Sleep(time.Duration(wait_time) * time.Second)
+	close(udps.Stop_chan)
+}
+
+func (udps *Udp_scanner) gen_ips_wait(netip net.IP, hostsize int) {
+	defer udps.Wg.Done()
+	udps.gen_ips(netip, hostsize)
 	// wait some time to send out SYNs & handle the responses
 	// of the IPs just generated before ending the program
 	var wait_time int = len(udps.Ip_chan)/config.Cfg.Pkts_per_sec + 10
@@ -286,7 +310,7 @@ func (udps *Udp_scanner) Start_scan(args []string, outpath string) {
 		go udps.Read_ips_file(fname)
 	} else {
 		logging.Println(3, nil, "running in CIDR mode")
-		go udps.gen_ips(netip, hostsize)
+		go udps.gen_ips_wait(netip, hostsize)
 	}
 	for i := 0; i < 8; i++ {
 		udps.Wg.Add(1)
@@ -298,4 +322,37 @@ func (udps *Udp_scanner) Start_scan(args []string, outpath string) {
 	logging.Println(3, nil, "all routines finished")
 	logging.Write_to_runlog("END " + time.Now().UTC().String())
 	logging.Println(3, nil, "program done")
+}
+
+func (udps *Udp_scanner) Start_internal(nets []net.IP, hostsize int) []scanner.Scan_data_item {
+	udps.Scanner_init()
+	udps.Sender_init()
+	udps.L2_sender = &udps.L2
+	udps.Scanner_methods = udps
+	udps.Base_methods = udps
+	udps.bound_sockets = []*net.UDPConn{}
+	// synced between multiple init_udp()
+	udps.ip_loop_id = synced_init{
+		id:    0,
+		port:  config.Cfg.Port_min,
+		dnsid: 0,
+	}
+
+	udps.Bind_ports()
+	// set the DNS_PAYLOAD_SIZE once as it is static
+	_, _, dns_payload := udps.Build_dns(net.ParseIP("0.0.0.0"), 0, 0, config.Cfg.Dns_query)
+	udps.DNS_PAYLOAD_SIZE = uint16(len(dns_payload))
+	handle := common.Get_ether_handle("udp")
+	// start packet capture as goroutine
+	udps.Wg.Add(6)
+	go udps.Packet_capture(handle)
+	go udps.Store_internal()
+	go udps.Timeout()
+	go udps.gen_ips_nets(nets, hostsize)
+	go udps.init_udp()
+	go udps.Close_handle(handle)
+	udps.Wg.Wait()
+	udps.Unbind_ports()
+	logging.Println(3, nil, "internal scan done")
+	return udps.Result_data_internal
 }

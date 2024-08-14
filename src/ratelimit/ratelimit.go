@@ -7,7 +7,9 @@ import (
 	"dns_tools/common"
 	"dns_tools/common/udp_common"
 	"dns_tools/config"
+	"dns_tools/generator"
 	"dns_tools/logging"
+	udpscanner "dns_tools/scanner/udp"
 	"encoding/binary"
 	"encoding/csv"
 	"encoding/hex"
@@ -37,9 +39,10 @@ type Answer_entry struct {
 }
 
 type Resolver_entry struct {
-	resolver_ip     net.IP
-	tfwd_ips        []net.IP // ip pool
-	tfwd_pool_pos   int
+	resolver_ip   net.IP
+	tfwd_ips      []net.IP // ip pool
+	tfwd_pool_pos int
+
 	rate_pos        int            // the current pos in the rate slice aka the current send rate
 	rate_limiter    *rate.Limiter  // current rate limiter
 	answer_data     []Answer_entry // us, answer timestamps, log timestamp of every incoming packet
@@ -71,6 +74,7 @@ type Rate_tester struct {
 	current_port       uint32
 	resolver_counter   int
 	rec_thres          float64
+	startup            bool
 }
 
 func (entry *Resolver_entry) calc_last_second_rate(tester *Rate_tester) {
@@ -130,7 +134,39 @@ func (tester *Rate_tester) write_results(out_path string) {
 	}
 }
 
-func (tester *Rate_tester) Read_forwarders(fname string) {
+func (tester *Rate_tester) find_active_fwds() {
+	var mask uint32 = 0xffffff00
+	var config_backup config.Cfg_db
+	//config.Cfg.Verbosity = 3
+	//config.Cfg.Pkts_per_sec = 20000
+	var nets map[uint32]struct{} = make(map[uint32]struct{}, 0)
+	for _, entry := range tester.resolver_data {
+		for _, fwd_ip := range entry.tfwd_ips {
+			var cur_net uint32 = generator.Ip42uint32(fwd_ip) & mask
+			if _, ok := nets[cur_net]; !ok {
+				nets[cur_net] = struct{}{}
+			}
+		}
+	}
+	pass_on_nets := make([]net.IP, 0)
+	for k := range nets {
+		pass_on_nets = append(pass_on_nets, generator.Uint322ip(k))
+	}
+	var udp_scanner udpscanner.Udp_scanner
+	var data_items = udp_scanner.Start_internal(pass_on_nets, 8)
+	var udp_data_items []udpscanner.Udp_scan_data_item = make([]udpscanner.Udp_scan_data_item, 0)
+	for _, item := range data_items {
+		udp_item, ok := item.(*udpscanner.Udp_scan_data_item)
+		if !ok {
+			log.Fatal("error in converting data item to udp data item")
+		}
+		udp_data_items = append(udp_data_items, *udp_item)
+	}
+	logging.Println(5, nil, udp_data_items)
+	config.Cfg = config_backup
+}
+
+func (tester *Rate_tester) read_forwarders(fname string) bool {
 	logging.Println(3, nil, "reading forwarders from", fname)
 	file, err := os.Open(fname)
 	if err != nil {
@@ -173,13 +209,22 @@ func (tester *Rate_tester) Read_forwarders(fname string) {
 		resolver_entry.tfwd_ips = append(resolver_entry.tfwd_ips, net.ParseIP(split[csv_target_ip]))
 	}
 
+	if config.Cfg.Rate_mode == "probe" {
+		tester.find_active_fwds()
+		return false
+	} else if config.Cfg.Rate_mode != "direct" && config.Cfg.Rate_mode != "" {
+		logging.Println(1, nil, "the rate_mode", config.Cfg.Rate_mode, "does not exist")
+		return false
+	}
+
 	logging.Println(6, nil, "read all lines")
 	logging.Println(3, nil, "there are", len(tester.resolver_data), "resolvers")
+	return true
 }
 
 func (tester *Rate_tester) rate_test_target(id int, entry *Resolver_entry) {
 	// create a dns query
-	var dnsid uint16 = 0
+	var dnsid uint16 = 0 //TODO maybe make this id random
 	for {
 		t_start := time.Now().UnixMicro()
 		// send for increate_interval ms
@@ -268,6 +313,9 @@ func (tester *Rate_tester) send_packets(id int) {
 }
 
 func (tester *Rate_tester) Handle_pkt(pkt gopacket.Packet) {
+	if tester.startup {
+
+	}
 	rec_time := time.Now().UnixMicro()
 	ip_layer := pkt.Layer(layers.LayerTypeIPv4)
 	if ip_layer == nil {
@@ -347,13 +395,21 @@ func (tester *Rate_tester) Start_ratetest(args []string, outpath string) {
 
 	if len(args) < 1 {
 		logging.Println(1, nil, "missing intersect input file")
+		return
 	}
-	tester.Read_forwarders(args[0])
+
+	logging.Write_to_runlog("START " + time.Now().UTC().String())
+
+	if !tester.read_forwarders(args[0]) {
+		logging.Println(3, nil, "exiting with error")
+		return
+	}
 
 	// packet capture will call Handle_pkt
 	handle := common.Get_ether_handle("udp")
 	tester.Wg.Add(1)
 	go tester.Packet_capture(handle)
+
 	// path to an output directory, each resolver will be written to its own file
 	go tester.write_results(outpath)
 	// start ratelimit senders
