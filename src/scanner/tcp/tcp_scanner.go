@@ -411,8 +411,9 @@ var ip_loop_id u32id = u32id{
 func (tcps *Tcp_scanner) get_next_id() uint32 {
 	ip_loop_id.mu.Lock()
 	defer ip_loop_id.mu.Unlock()
+	last_id := ip_loop_id.id
 	ip_loop_id.id += 1
-	return ip_loop_id.id
+	return last_id
 }
 
 func (tcps *Tcp_scanner) init_tcp() {
