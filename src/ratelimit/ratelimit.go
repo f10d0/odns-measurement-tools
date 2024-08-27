@@ -14,6 +14,7 @@ import (
 	"encoding/csv"
 	"encoding/hex"
 	"log"
+	"math/rand"
 	"net"
 	"os"
 	"path"
@@ -75,6 +76,7 @@ type Rate_tester struct {
 	resolver_counter   int
 	rec_thres          float64
 	startup            bool
+	domains            []string
 }
 
 func (entry *Resolver_entry) calc_last_second_rate(tester *Rate_tester) {
@@ -166,6 +168,28 @@ func (tester *Rate_tester) find_active_fwds() {
 	config.Cfg = config_backup
 }
 
+func (tester *Rate_tester) read_domain_list() {
+	logging.Println(3, nil, "reading domain list from", config.Cfg.Domain_list)
+	file, err := os.Open(config.Cfg.Domain_list)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			logging.Println(6, nil, "line empty")
+			continue
+		}
+		// split csv columns
+		// domain file format: id,domain
+		split := strings.Split(line, ",")
+		tester.domains = append(tester.domains, split[1])
+	}
+}
+
 func (tester *Rate_tester) read_forwarders(fname string) bool {
 	logging.Println(3, nil, "reading forwarders from", fname)
 	file, err := os.Open(fname)
@@ -210,9 +234,12 @@ func (tester *Rate_tester) read_forwarders(fname string) bool {
 	}
 
 	if config.Cfg.Rate_mode == "probe" {
+		logging.Println(3, nil, "probe rate mode")
 		tester.find_active_fwds()
 		return false
-	} else if config.Cfg.Rate_mode != "direct" && config.Cfg.Rate_mode != "" {
+	} else if config.Cfg.Rate_mode == "direct" || config.Cfg.Rate_mode == "" {
+		logging.Println(3, nil, "direct rate mode")
+	} else {
 		logging.Println(1, nil, "the rate_mode", config.Cfg.Rate_mode, "does not exist")
 		return false
 	}
@@ -230,7 +257,7 @@ func (tester *Rate_tester) rate_test_target(id int, entry *Resolver_entry) {
 		// send for increate_interval ms
 		for time.Now().UnixMicro()-t_start < int64(tester.increase_interval)*1000 {
 			var query_domain string
-			if config.Cfg.Dynamic_domain {
+			if config.Cfg.Domain_mode == "hash" {
 				hash := sha256.New()
 				time_bytes := make([]byte, 8)
 				binary.LittleEndian.PutUint64(time_bytes, (uint64)(time.Now().UnixMicro()))
@@ -238,8 +265,12 @@ func (tester *Rate_tester) rate_test_target(id int, entry *Resolver_entry) {
 				domain_prefix := hex.EncodeToString(hash.Sum(nil)[0:4])
 				query_domain = domain_prefix + "." + config.Cfg.Dns_query
 				logging.Println(6, "Sender "+strconv.Itoa(id), "using query domain:", query_domain)
-			} else {
+			} else if config.Cfg.Domain_mode == "constant" {
 				query_domain = config.Cfg.Dns_query
+			} else if config.Cfg.Domain_mode == "list" {
+				query_domain = tester.domains[rand.Intn(len(tester.domains))]
+			} else {
+				log.Fatal("wrong domain mode")
 			}
 			//TODO check if ip on blocklist
 			// entry.tfwd_ips[entry.tfwd_pool_pos]
@@ -314,7 +345,7 @@ func (tester *Rate_tester) send_packets(id int) {
 
 func (tester *Rate_tester) Handle_pkt(pkt gopacket.Packet) {
 	if tester.startup {
-
+		// TODO check active fwds in subnet
 	}
 	rec_time := time.Now().UnixMicro()
 	ip_layer := pkt.Layer(layers.LayerTypeIPv4)
@@ -403,6 +434,11 @@ func (tester *Rate_tester) Start_ratetest(args []string, outpath string) {
 	if !tester.read_forwarders(args[0]) {
 		logging.Println(3, nil, "exiting with error")
 		return
+	}
+
+	if config.Cfg.Domain_mode == "list" {
+		logging.Println(3, nil, "using domain list")
+		tester.read_domain_list()
 	}
 
 	// packet capture will call Handle_pkt

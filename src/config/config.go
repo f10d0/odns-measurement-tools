@@ -21,7 +21,8 @@ type Cfg_db struct {
 	Port_reuse_timeout int    `yaml:"port_reuse_timeout"`
 	Number_routines    uint16 `yaml:"no_of_routines"`
 	Craft_ethernet     bool   `yaml:"craft_ethernet"`
-	Dynamic_domain     bool   `yaml:"dynamic_domain"`
+	Domain_mode        string `yaml:"domain_mode"`
+	Domain_list        string `yaml:"domain_list"`
 	Rate_curve         string `yaml:"rate_curve"`
 	// rate modes may be: < probe | direct >
 	//  - probe will check the entire /24 net of the transparent fwds from the intersect file for (further) active fwds
