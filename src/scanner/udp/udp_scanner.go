@@ -7,15 +7,15 @@ import (
 	"dns_tools/generator"
 	"dns_tools/logging"
 	"dns_tools/scanner"
+	"fmt"
 	"log"
 	"math"
+	"math/rand"
 	"net"
 	"os"
 	"strconv"
 	"sync"
 	"time"
-
-	"math/rand"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
@@ -58,17 +58,25 @@ func (udps *Udp_scanner) update_sync_init() (uint32, uint16, uint16) {
 
 // this struct contains all relevant data to track the dns query & response
 type Udp_scan_data_item struct {
-	id       uint32
-	ts       time.Time
-	ip       net.IP
-	answerip net.IP
-	port     layers.UDPPort
-	dnsid    uint16
-	dns_recs []net.IP
+	Id       uint32
+	Ts       time.Time
+	Ip       net.IP
+	Answerip net.IP
+	Port     layers.UDPPort
+	Dnsid    uint16
+	Dns_recs []net.IP
 }
 
 func (u *Udp_scan_data_item) Get_timestamp() time.Time {
-	return u.ts
+	return u.Ts
+}
+
+func (u *Udp_scan_data_item) String() string {
+	var dns_rec string = ""
+	for _, rec := range u.Dns_recs {
+		dns_rec += rec.String() + " "
+	}
+	return fmt.Sprintf("Item %d: Request-IP %s, Answer-IP %s, DNS-Recs %s", u.Id, u.Ip.String(), u.Answerip.String(), dns_rec)
 }
 
 // key for the map below
@@ -85,7 +93,7 @@ func (udps *Udp_scanner) Write_item(scan_item *scanner.Scan_data_item) {
 	udps.Writer.Write(scan_item_to_strarr(udp_scan_item))
 	// remove entry from map
 	udps.Scan_data.Mu.Lock()
-	delete(udps.Scan_data.Items, udp_scan_item_key{udp_scan_item.port, udp_scan_item.dnsid})
+	delete(udps.Scan_data.Items, udp_scan_item_key{udp_scan_item.Port, udp_scan_item.Dnsid})
 	udps.Scan_data.Mu.Unlock()
 }
 
@@ -93,20 +101,20 @@ func scan_item_to_strarr(scan_item *Udp_scan_data_item) []string {
 	// csv format: id;target_ip;response_ip;arecords;timestamp;port;dnsid
 	// transform scan_item into string array for csv writer
 	var record []string
-	record = append(record, strconv.Itoa(int(scan_item.id)))
-	record = append(record, scan_item.ip.String())
-	record = append(record, scan_item.answerip.String())
+	record = append(record, strconv.Itoa(int(scan_item.Id)))
+	record = append(record, scan_item.Ip.String())
+	record = append(record, scan_item.Answerip.String())
 	dns_answers := ""
-	for i, dns_ip := range scan_item.dns_recs {
+	for i, dns_ip := range scan_item.Dns_recs {
 		dns_answers += dns_ip.String()
-		if i != len(scan_item.dns_recs)-1 {
+		if i != len(scan_item.Dns_recs)-1 {
 			dns_answers += ","
 		}
 	}
 	record = append(record, dns_answers)
-	record = append(record, scan_item.ts.UTC().Format("2006-01-02 15:04:05.000000"))
-	record = append(record, scan_item.port.String())
-	record = append(record, strconv.Itoa((int)(scan_item.dnsid)))
+	record = append(record, scan_item.Ts.UTC().Format("2006-01-02 15:04:05.000000"))
+	record = append(record, scan_item.Port.String())
+	record = append(record, strconv.Itoa((int)(scan_item.Dnsid)))
 	return record
 }
 
@@ -116,12 +124,12 @@ func (udps *Udp_scanner) send_dns(id uint32, dst_ip net.IP, src_port layers.UDPP
 	// check for sequence number collisions
 	udps.Scan_data.Mu.Lock()
 	s_d_item := Udp_scan_data_item{
-		id:       id,
-		ts:       time.Now(),
-		ip:       dst_ip,
-		port:     src_port,
-		dns_recs: nil,
-		dnsid:    dnsid,
+		Id:       id,
+		Ts:       time.Now(),
+		Ip:       dst_ip,
+		Port:     src_port,
+		Dns_recs: nil,
+		Dnsid:    dnsid,
 	}
 	logging.Println(6, nil, "scan_data=", s_d_item)
 	udps.Scan_data.Items[udp_scan_item_key{src_port, dnsid}] = &s_d_item
@@ -159,7 +167,7 @@ func (udps *Udp_scanner) Handle_pkt(pkt gopacket.Packet) {
 			logging.Println(5, nil, "DNS not found")
 			return
 		}
-		logging.Println(5, nil, "got DNS response")
+		logging.Println(5, nil, "got DNS response from", ip.SrcIP.String(), "port", udp.DstPort, "id", dns.ID)
 		// check if item in map and assign value
 		udps.Scan_data.Mu.Lock()
 		scan_item, ok := udps.Scan_data.Items[udp_scan_item_key{udp.DstPort, dns.ID}]
@@ -182,8 +190,8 @@ func (udps *Udp_scanner) Handle_pkt(pkt gopacket.Packet) {
 				//return
 			}
 		}
-		udp_scan_item.answerip = ip.SrcIP
-		udp_scan_item.dns_recs = answers_ip
+		udp_scan_item.Answerip = ip.SrcIP
+		udp_scan_item.Dns_recs = answers_ip
 		// queue for writeout
 		udps.Write_chan <- &scan_item
 	}
@@ -240,10 +248,11 @@ func (udps *Udp_scanner) gen_ips(netip net.IP, hostsize int) bool {
 
 func (udps *Udp_scanner) gen_ips_nets(nets []net.IP, hostsize int) {
 	defer udps.Wg.Done()
+	rand.Shuffle(len(nets), func(i, j int) { nets[i], nets[j] = nets[j], nets[i] })
 	var start_len = len(nets)
 	// generate ips for all the given nets
 	for i := 0; i < start_len; i++ {
-		if !udps.gen_ips(nets[rand.Intn(len(nets))], hostsize) {
+		if !udps.gen_ips(nets[i], hostsize) {
 			return
 		}
 	}
@@ -330,7 +339,7 @@ func (udps *Udp_scanner) Start_internal(nets []net.IP, hostsize int) []scanner.S
 	udps.L2_sender = &udps.L2
 	udps.Scanner_methods = udps
 	udps.Base_methods = udps
-	udps.bound_sockets = []*net.UDPConn{}
+	//udps.bound_sockets = []*net.UDPConn{}
 	// synced between multiple init_udp()
 	udps.ip_loop_id = synced_init{
 		id:    0,
@@ -338,7 +347,7 @@ func (udps *Udp_scanner) Start_internal(nets []net.IP, hostsize int) []scanner.S
 		dnsid: 0,
 	}
 
-	udps.Bind_ports()
+	//udps.Bind_ports()
 	// set the DNS_PAYLOAD_SIZE once as it is static
 	_, _, dns_payload := udps.Build_dns(net.ParseIP("0.0.0.0"), 0, 0, config.Cfg.Dns_query)
 	udps.DNS_PAYLOAD_SIZE = uint16(len(dns_payload))
@@ -352,7 +361,7 @@ func (udps *Udp_scanner) Start_internal(nets []net.IP, hostsize int) []scanner.S
 	go udps.init_udp()
 	go udps.Close_handle(handle)
 	udps.Wg.Wait()
-	udps.Unbind_ports()
+	//udps.Unbind_ports()
 	logging.Println(3, nil, "internal scan done")
 	return udps.Result_data_internal
 }

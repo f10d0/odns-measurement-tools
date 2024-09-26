@@ -75,7 +75,6 @@ type Rate_tester struct {
 	current_port       uint32
 	resolver_counter   int
 	rec_thres          float64
-	startup            bool
 	domains            []string
 }
 
@@ -136,11 +135,34 @@ func (tester *Rate_tester) write_results(out_path string) {
 	}
 }
 
+func (tester *Rate_tester) print_resolver_data() {
+	for _, v := range tester.resolver_data {
+		var fwd_strs []string
+		for _, fwd := range v.tfwd_ips {
+			fwd_strs = append(fwd_strs, fwd.String())
+		}
+		logging.Println(5, "Resolver Data", "Resolver-IP:", v.resolver_ip, "Fwds:", fwd_strs)
+		//fmt.Println("Resolver Data", "Resolver-IP:", v.resolver_ip, "Fwds:", fwd_strs)
+	}
+}
+
+func iparr_contains(s []net.IP, e net.IP) bool {
+	for _, a := range s {
+		if generator.Ip42uint32(a) == generator.Ip42uint32(e) {
+			return true
+		}
+	}
+	return false
+}
+
 func (tester *Rate_tester) find_active_fwds() {
+	logging.Println(3, "Probing", "Probing for active forwarders")
 	var mask uint32 = 0xffffff00
-	var config_backup config.Cfg_db
-	//config.Cfg.Verbosity = 3
-	//config.Cfg.Pkts_per_sec = 20000
+	var config_backup config.Cfg_db = config.Cfg
+	config.Cfg.Verbosity = 4
+	config.Cfg.Pkts_per_sec = 20000
+
+	// Find all the nets to scan
 	var nets map[uint32]struct{} = make(map[uint32]struct{}, 0)
 	for _, entry := range tester.resolver_data {
 		for _, fwd_ip := range entry.tfwd_ips {
@@ -149,11 +171,15 @@ func (tester *Rate_tester) find_active_fwds() {
 				nets[cur_net] = struct{}{}
 			}
 		}
+		// Zero fwds from resolver_data
+		entry.tfwd_ips = make([]net.IP, 0)
 	}
 	pass_on_nets := make([]net.IP, 0)
 	for k := range nets {
 		pass_on_nets = append(pass_on_nets, generator.Uint322ip(k))
+		logging.Println(4, "Probing", "net:", generator.Uint322ip(k).String())
 	}
+	// Scan these nets with the UDP scanner
 	var udp_scanner udpscanner.Udp_scanner
 	var data_items = udp_scanner.Start_internal(pass_on_nets, 8)
 	var udp_data_items []udpscanner.Udp_scan_data_item = make([]udpscanner.Udp_scan_data_item, 0)
@@ -163,9 +189,32 @@ func (tester *Rate_tester) find_active_fwds() {
 			log.Fatal("error in converting data item to udp data item")
 		}
 		udp_data_items = append(udp_data_items, *udp_item)
+		logging.Println(5, "Probing", udp_item.String())
 	}
-	logging.Println(5, nil, udp_data_items)
 	config.Cfg = config_backup
+	// Add detected fwds
+	temp_resolver_data := tester.resolver_data
+	for res_key, res_val := range temp_resolver_data {
+		for _, udp_item := range udp_data_items {
+			if len(udp_item.Dns_recs) == 0 || udp_item.Answerip == nil {
+				continue
+			}
+			if generator.Ip42uint32(udp_item.Answerip) == generator.Ip42uint32(res_val.resolver_ip) {
+				// check if ip already in list
+				if !iparr_contains(res_val.tfwd_ips, udp_item.Ip) {
+					res_val.tfwd_ips = append(res_val.tfwd_ips, udp_item.Ip)
+				} else {
+					logging.Println(5, nil, "ip already contained in array of resolver", res_val.resolver_ip.String(), "data item:", udp_item.String())
+				}
+			}
+		}
+		// no fwds found -> remove from map
+		if len(res_val.tfwd_ips) == 0 {
+			delete(tester.resolver_data, res_key)
+		}
+	}
+	logging.Println(3, "Probing", "Probing done")
+	tester.print_resolver_data()
 }
 
 func (tester *Rate_tester) read_domain_list() {
@@ -236,9 +285,9 @@ func (tester *Rate_tester) read_forwarders(fname string) bool {
 	if config.Cfg.Rate_mode == "probe" {
 		logging.Println(3, nil, "probe rate mode")
 		tester.find_active_fwds()
-		return false
 	} else if config.Cfg.Rate_mode == "direct" || config.Cfg.Rate_mode == "" {
 		logging.Println(3, nil, "direct rate mode")
+		tester.print_resolver_data()
 	} else {
 		logging.Println(1, nil, "the rate_mode", config.Cfg.Rate_mode, "does not exist")
 		return false
@@ -344,9 +393,7 @@ func (tester *Rate_tester) send_packets(id int) {
 }
 
 func (tester *Rate_tester) Handle_pkt(pkt gopacket.Packet) {
-	if tester.startup {
-		// TODO check active fwds in subnet
-	}
+	// TODO check public resolvers with tfwds and w/o
 	rec_time := time.Now().UnixMicro()
 	ip_layer := pkt.Layer(layers.LayerTypeIPv4)
 	if ip_layer == nil {
