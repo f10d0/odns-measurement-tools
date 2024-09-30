@@ -510,7 +510,7 @@ func (tcps *Tcp_scanner) Start_scan(args []string, outpath string) {
 		logging.Println(3, nil, "running in CIDR mode")
 		go tcps.gen_ips(netip, hostsize)
 	}
-	for i := 0; i < 8; i++ {
+	for i := 0; i < int(config.Cfg.Number_routines); i++ {
 		tcps.Wg.Add(1)
 		go tcps.init_tcp()
 	}

@@ -40,10 +40,9 @@ type Answer_entry struct {
 }
 
 type Resolver_entry struct {
-	resolver_ip   net.IP
-	tfwd_ips      []net.IP // ip pool
-	tfwd_pool_pos int
-
+	resolver_ip     net.IP
+	tfwd_ips        []net.IP // ip pool
+	tfwd_pool_pos   int
 	rate_pos        int            // the current pos in the rate slice aka the current send rate
 	rate_limiter    *rate.Limiter  // current rate limiter
 	answer_data     []Answer_entry // us, answer timestamps, log timestamp of every incoming packet
@@ -70,11 +69,9 @@ type Rate_tester struct {
 	active_resolvers   map[Active_key]*Resolver_entry
 	finished_resolvers chan *Resolver_entry
 	sender_wg          sync.WaitGroup
-	increase_interval  int // time delay between rate increases [ms]
 	rate_curve         []int
 	current_port       uint32
 	resolver_counter   int
-	rec_thres          float64
 	domains            []string
 }
 
@@ -84,11 +81,11 @@ func (entry *Resolver_entry) calc_last_second_rate(tester *Rate_tester) {
 	ans_len := len(entry.answer_data) - 1
 	i := ans_len
 	for ; i >= 0; i-- {
-		if entry.answer_data[i].ts < now-int64(tester.increase_interval)*1000 {
+		if entry.answer_data[i].ts < now-int64(config.Cfg.Rate_increase_interval)*1000 {
 			break
 		}
 	}
-	entry.moving_avg_rate = float64(ans_len-i) / float64(tester.increase_interval) * 1000
+	entry.moving_avg_rate = float64(ans_len-i) / float64(config.Cfg.Rate_increase_interval) * 1000
 	entry.max_rate = common.Max(entry.max_rate, entry.moving_avg_rate)
 }
 
@@ -159,7 +156,7 @@ func (tester *Rate_tester) find_active_fwds() {
 	logging.Println(3, "Probing", "Probing for active forwarders")
 	var mask uint32 = 0xffffff00
 	var config_backup config.Cfg_db = config.Cfg
-	config.Cfg.Verbosity = 4
+	//config.Cfg.Verbosity = 4
 	config.Cfg.Pkts_per_sec = 20000
 
 	// Find all the nets to scan
@@ -217,7 +214,7 @@ func (tester *Rate_tester) find_active_fwds() {
 	tester.print_resolver_data()
 }
 
-func (tester *Rate_tester) read_domain_list() {
+func (tester *Rate_tester) read_domain_list(max int) {
 	logging.Println(3, nil, "reading domain list from", config.Cfg.Domain_list)
 	file, err := os.Open(config.Cfg.Domain_list)
 	if err != nil {
@@ -236,6 +233,9 @@ func (tester *Rate_tester) read_domain_list() {
 		// domain file format: id,domain
 		split := strings.Split(line, ",")
 		tester.domains = append(tester.domains, split[1])
+		if max != 0 && len(tester.domains)+1 > max {
+			break
+		}
 	}
 }
 
@@ -285,6 +285,7 @@ func (tester *Rate_tester) read_forwarders(fname string) bool {
 	if config.Cfg.Rate_mode == "probe" {
 		logging.Println(3, nil, "probe rate mode")
 		tester.find_active_fwds()
+		return false
 	} else if config.Cfg.Rate_mode == "direct" || config.Cfg.Rate_mode == "" {
 		logging.Println(3, nil, "direct rate mode")
 		tester.print_resolver_data()
@@ -299,12 +300,11 @@ func (tester *Rate_tester) read_forwarders(fname string) bool {
 }
 
 func (tester *Rate_tester) rate_test_target(id int, entry *Resolver_entry) {
-	// create a dns query
 	var dnsid uint16 = 0 //TODO maybe make this id random
 	for {
 		t_start := time.Now().UnixMicro()
-		// send for increate_interval ms
-		for time.Now().UnixMicro()-t_start < int64(tester.increase_interval)*1000 {
+		// send for increase_interval ms
+		for time.Now().UnixMicro()-t_start < int64(config.Cfg.Rate_increase_interval)*1000 {
 			var query_domain string
 			if config.Cfg.Domain_mode == "hash" {
 				hash := sha256.New()
@@ -340,7 +340,7 @@ func (tester *Rate_tester) rate_test_target(id int, entry *Resolver_entry) {
 			logging.Println(5, "Sender "+strconv.Itoa(id), "rate curve exhausted")
 			break
 		}
-		if entry.moving_avg_rate < tester.rec_thres*float64(tester.rate_curve[entry.rate_pos]) {
+		if entry.moving_avg_rate < config.Cfg.Rate_receive_threshold*float64(tester.rate_curve[entry.rate_pos]) {
 			logging.Println(5, "Sender "+strconv.Itoa(id), "receiving rate too small, quitting")
 			break
 		}
@@ -444,8 +444,21 @@ func (tester *Rate_tester) Handle_pkt(pkt gopacket.Packet) {
 	rate_entry.answer_mu.Unlock()
 }
 
+func (tester *Rate_tester) inject_cache() {
+	logging.Println(3, "cache injection", "starting")
+	// summon go routines
+	for i := 0; i < int(config.Cfg.Rate_inject_routines); i++ {
+		tester.sender_wg.Add(1)
+
+		// iterate all resolvers
+		// per resolver iterate all 1k domains
+		// apply send limit of 100pps
+		// ignore responses?
+	}
+	logging.Println(3, "cache injection", "done")
+}
+
 func (tester *Rate_tester) Start_ratetest(args []string, outpath string) {
-	tester.increase_interval = 2000 // ms
 	tester.resolver_data = make(map[Resolver_key]*Resolver_entry)
 	tester.active_resolvers = make(map[Active_key]*Resolver_entry)
 	// load rate curve from config
@@ -462,11 +475,9 @@ func (tester *Rate_tester) Start_ratetest(args []string, outpath string) {
 	}
 	logging.Println(4, nil, "rate curve:", tester.rate_curve)
 	tester.current_port = uint32(config.Cfg.Port_min)
-	tester.rec_thres = 0.75
 	tester.L2_sender = &tester.L2
 	tester.Base_methods = tester
 	tester.finished_resolvers = make(chan *Resolver_entry, 128)
-
 	tester.Sender_init()
 	tester.Base_init()
 	tester.Bind_ports()
@@ -485,7 +496,11 @@ func (tester *Rate_tester) Start_ratetest(args []string, outpath string) {
 
 	if config.Cfg.Domain_mode == "list" {
 		logging.Println(3, nil, "using domain list")
-		tester.read_domain_list()
+		tester.read_domain_list(0)
+	} else if config.Cfg.Domain_mode == "inject" {
+		logging.Println(3, nil, "using domain list, inject mode")
+		tester.read_domain_list(config.Cfg.Rate_inject_count)
+		tester.inject_cache()
 	}
 
 	// packet capture will call Handle_pkt

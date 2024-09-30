@@ -249,10 +249,9 @@ func (udps *Udp_scanner) gen_ips(netip net.IP, hostsize int) bool {
 func (udps *Udp_scanner) gen_ips_nets(nets []net.IP, hostsize int) {
 	defer udps.Wg.Done()
 	rand.Shuffle(len(nets), func(i, j int) { nets[i], nets[j] = nets[j], nets[i] })
-	var start_len = len(nets)
 	// generate ips for all the given nets
-	for i := 0; i < start_len; i++ {
-		if !udps.gen_ips(nets[i], hostsize) {
+	for _, ip := range nets {
+		if !udps.gen_ips(ip, hostsize) {
 			return
 		}
 	}
@@ -321,7 +320,7 @@ func (udps *Udp_scanner) Start_scan(args []string, outpath string) {
 		logging.Println(3, nil, "running in CIDR mode")
 		go udps.gen_ips_wait(netip, hostsize)
 	}
-	for i := 0; i < 8; i++ {
+	for i := 0; i < int(config.Cfg.Number_routines); i++ {
 		udps.Wg.Add(1)
 		go udps.init_udp()
 	}
