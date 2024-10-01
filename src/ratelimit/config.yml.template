@@ -16,3 +16,4 @@ rate_receive_threshold: 0.75
 rate_inject_speed: 100
 rate_inject_count: 1000
 rate_inject_routines: 1000
+rate_response_ip_only: false

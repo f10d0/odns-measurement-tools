@@ -28,11 +28,17 @@ import (
 	"golang.org/x/time/rate"
 )
 
-const (
-	csv_target_ip     int = 1
-	csv_response_ip   int = 2
-	csv_response_type int = 4
-)
+type csv_pos_struct struct {
+	target_ip     int
+	response_ip   int
+	response_type int
+}
+
+var csv_pos csv_pos_struct = csv_pos_struct{
+	target_ip:     -1,
+	response_ip:   -1,
+	response_type: -1,
+}
 
 type Answer_entry struct {
 	ts               int64
@@ -75,7 +81,7 @@ type Rate_tester struct {
 	domains            []string
 }
 
-func (entry *Resolver_entry) calc_last_second_rate(tester *Rate_tester) {
+func (entry *Resolver_entry) calc_last_second_rate() {
 	now := time.Now().UnixMicro()
 	// calculate avg receive rate
 	ans_len := len(entry.answer_data) - 1
@@ -92,6 +98,7 @@ func (entry *Resolver_entry) calc_last_second_rate(tester *Rate_tester) {
 func (tester *Rate_tester) write_results(out_path string) {
 	formatted_ts := time.Now().UTC().Format("2006-01-02_15-04-05")
 	out_path = path.Join(out_path, formatted_ts)
+	// TODO add config specifications to output folder name (ts_rate-mode_domain-mode_increase-interval_threshold)
 	os.MkdirAll(out_path, os.ModePerm)
 	for {
 		select {
@@ -254,6 +261,29 @@ func (tester *Rate_tester) read_forwarders(fname string) bool {
 	defer gzip_reader.Close()
 
 	scanner := bufio.NewScanner(gzip_reader)
+	// read column headers
+	if scanner.Scan() {
+		line := scanner.Text()
+		split := strings.Split(line, ";")
+		for i, col := range split {
+			switch col {
+			case "ip_request":
+				csv_pos.target_ip = i
+			case "ip_response":
+				csv_pos.response_ip = i
+			case "response_type":
+				csv_pos.response_type = i
+			}
+		}
+		if csv_pos.response_ip == -1 || (!config.Cfg.Rate_response_ip_only && csv_pos.target_ip == -1) {
+			log.Fatal("missing header of the csv file")
+		}
+	}
+	if config.Cfg.Rate_response_ip_only {
+		logging.Println(5, nil, "Rate limit testing response ip directly")
+	} else {
+		logging.Println(5, nil, "Rate limit testing via target ip")
+	}
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
@@ -262,16 +292,16 @@ func (tester *Rate_tester) read_forwarders(fname string) bool {
 		}
 		// split csv columns
 		split := strings.Split(line, ";")
-		if split[csv_response_type] != "Transparent Forwarder" {
-			continue
-		}
+		//if split[csv_response_type] != "Transparent Forwarder" {
+		//	continue
+		//}
 		//logging.Println(6, nil, "target-ip:", split[csv_target_ip], "response-ip:", split[csv_response_ip])
 		// add to resolver map
-		key := Resolver_key{resolver_ip: split[csv_response_ip]}
+		key := Resolver_key{resolver_ip: split[csv_pos.response_ip]}
 		resolver_entry, ok := tester.resolver_data[key]
 		if !ok {
 			tester.resolver_data[key] = &Resolver_entry{
-				resolver_ip:  net.ParseIP(split[csv_response_ip]),
+				resolver_ip:  net.ParseIP(split[csv_pos.response_ip]),
 				tfwd_ips:     make([]net.IP, 0),
 				rate_pos:     0,
 				rate_limiter: rate.NewLimiter(rate.Every(time.Duration(1000000/tester.rate_curve[0])*time.Microsecond), 1),
@@ -279,7 +309,19 @@ func (tester *Rate_tester) read_forwarders(fname string) bool {
 			}
 			resolver_entry = tester.resolver_data[key]
 		}
-		resolver_entry.tfwd_ips = append(resolver_entry.tfwd_ips, net.ParseIP(split[csv_target_ip]))
+		if config.Cfg.Rate_response_ip_only {
+			if !iparr_contains(resolver_entry.tfwd_ips, net.ParseIP(split[csv_pos.response_ip])) {
+				resolver_entry.tfwd_ips = append(resolver_entry.tfwd_ips, net.ParseIP(split[csv_pos.response_ip]))
+			} else {
+				logging.Println(6, "Reading Forwarder File", "ip already in list")
+			}
+		} else {
+			if !iparr_contains(resolver_entry.tfwd_ips, net.ParseIP(split[csv_pos.target_ip])) {
+				resolver_entry.tfwd_ips = append(resolver_entry.tfwd_ips, net.ParseIP(split[csv_pos.target_ip]))
+			} else {
+				logging.Println(6, "Reading Forwarder File", "ip already in list")
+			}
+		}
 	}
 
 	if config.Cfg.Rate_mode == "probe" {
@@ -316,14 +358,14 @@ func (tester *Rate_tester) rate_test_target(id int, entry *Resolver_entry) {
 				logging.Println(6, "Sender "+strconv.Itoa(id), "using query domain:", query_domain)
 			} else if config.Cfg.Domain_mode == "constant" {
 				query_domain = config.Cfg.Dns_query
-			} else if config.Cfg.Domain_mode == "list" {
+			} else if config.Cfg.Domain_mode == "list" || config.Cfg.Domain_mode == "inject" {
 				query_domain = tester.domains[rand.Intn(len(tester.domains))]
 			} else {
 				log.Fatal("wrong domain mode")
 			}
 			//TODO check if ip on blocklist
 			// entry.tfwd_ips[entry.tfwd_pool_pos]
-			logging.Println(6, "Sender "+strconv.Itoa(id), "sending dns to", entry.tfwd_ips[entry.tfwd_pool_pos].String(), ", resolver", entry.resolver_ip.String())
+			logging.Println(6, "Sender "+strconv.Itoa(id), "sending dns to", entry.tfwd_ips[entry.tfwd_pool_pos].String(), ",resolver", entry.resolver_ip.String())
 			tester.Send_udp_pkt(tester.Build_dns(entry.tfwd_ips[entry.tfwd_pool_pos], layers.UDPPort(entry.outport), dnsid, query_domain))
 			dnsid++
 			entry.tfwd_pool_pos = (entry.tfwd_pool_pos + 1) % len(entry.tfwd_ips)
@@ -333,7 +375,7 @@ func (tester *Rate_tester) rate_test_target(id int, entry *Resolver_entry) {
 			}
 			time.Sleep(r.Delay())
 		}
-		entry.calc_last_second_rate(tester)
+		entry.calc_last_second_rate()
 		logging.Println(5, "Sender "+strconv.Itoa(id), "last calculated rate is ", entry.moving_avg_rate)
 		// set rate limiter to next value
 		if entry.rate_pos == len(tester.rate_curve)-1 {
@@ -349,7 +391,7 @@ func (tester *Rate_tester) rate_test_target(id int, entry *Resolver_entry) {
 		entry.rate_limiter.SetLimit(rate.Every(time.Duration(1000000/tester.rate_curve[entry.rate_pos]) * time.Microsecond))
 	}
 	// calc final rate
-	entry.calc_last_second_rate(tester)
+	entry.calc_last_second_rate()
 	logging.Println(4, "Sender "+strconv.Itoa(id), "final avg rate for ", entry.resolver_ip, "is", entry.moving_avg_rate, "Pkts/s")
 	logging.Println(4, "Sender "+strconv.Itoa(id), "max rate for ", entry.resolver_ip, "is", entry.max_rate, "Pkts/s")
 	// TODO test stability at max rate
