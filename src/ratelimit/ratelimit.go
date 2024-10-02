@@ -13,6 +13,7 @@ import (
 	"encoding/binary"
 	"encoding/csv"
 	"encoding/hex"
+	"fmt"
 	"log"
 	"math/rand"
 	"net"
@@ -45,17 +46,25 @@ type Answer_entry struct {
 	dns_payload_size int
 }
 
-type Resolver_entry struct {
-	resolver_ip     net.IP
-	tfwd_ips        []net.IP // ip pool
-	tfwd_pool_pos   int
-	rate_pos        int            // the current pos in the rate slice aka the current send rate
-	rate_limiter    *rate.Limiter  // current rate limiter
+type rate_data_s struct {
 	answer_data     []Answer_entry // us, answer timestamps, log timestamp of every incoming packet
 	answer_mu       sync.Mutex
 	moving_avg_rate float64
 	max_rate        float64
-	outport         uint16
+	rate_limiter    *rate.Limiter // current rate limiter
+}
+
+type Resolver_entry struct {
+	resolver_ip   net.IP
+	tfwd_ips      []net.IP // ip pool
+	tfwd_pool_pos int
+	rate_pos      int // the current pos in the rate slice aka the current send rate
+	rate_sync     sync.WaitGroup
+	rate_mu       sync.Mutex
+	outport       uint16
+	rate_data     []rate_data_s
+	acc_max_rate  int
+	acc_avg_rate  int
 }
 
 type Resolver_key struct {
@@ -81,7 +90,7 @@ type Rate_tester struct {
 	domains            []string
 }
 
-func (entry *Resolver_entry) calc_last_second_rate() {
+func (entry *rate_data_s) calc_last_second_rate() {
 	now := time.Now().UnixMicro()
 	// calculate avg receive rate
 	ans_len := len(entry.answer_data) - 1
@@ -97,12 +106,13 @@ func (entry *Resolver_entry) calc_last_second_rate() {
 
 func (tester *Rate_tester) write_results(out_path string) {
 	formatted_ts := time.Now().UTC().Format("2006-01-02_15-04-05")
-	out_path = path.Join(out_path, formatted_ts)
-	// TODO add config specifications to output folder name (ts_rate-mode_domain-mode_increase-interval_threshold)
+	out_path = path.Join(out_path, fmt.Sprintf("%s_rm-%s_dm-%s_incr-%s", formatted_ts, config.Cfg.Rate_mode, config.Cfg.Domain_mode, strconv.Itoa(config.Cfg.Rate_increase_interval)))
+	// TODO output config as txt file in folder
 	os.MkdirAll(out_path, os.ModePerm)
 	for {
 		select {
 		case entry := <-tester.finished_resolvers:
+			// TODO concurrent_pool
 			csvfile, err := os.Create(path.Join(out_path, entry.resolver_ip.String()+".csv.gz"))
 			if err != nil {
 				panic(err)
@@ -116,19 +126,19 @@ func (tester *Rate_tester) write_results(out_path string) {
 			// === csv format ===
 			// line 1: resolver_ip, max_rate, avg_rate
 			record = append(record, entry.resolver_ip.String())
-			record = append(record, strconv.Itoa(int(entry.max_rate)))
-			record = append(record, strconv.Itoa(int(entry.moving_avg_rate)))
+			record = append(record, strconv.Itoa(int(entry.acc_max_rate)))
+			record = append(record, strconv.Itoa(int(entry.acc_avg_rate)))
 			csv_writer.Write(record)
 			// line 2: ts 1?
 			// line 3: ts 2
 			// ...
 			// line n: ts n
-			for _, ans_entry := range entry.answer_data {
+			/*for _, ans_entry := range entry.answer_data {
 				record = make([]string, 2)
 				record[0] = strconv.FormatInt(ans_entry.ts, 10)
 				record[1] = strconv.Itoa(ans_entry.dns_payload_size)
 				csv_writer.Write(record)
-			}
+			}*/
 
 			csv_writer.Flush()
 			zip_writer.Close()
@@ -218,7 +228,6 @@ func (tester *Rate_tester) find_active_fwds() {
 		}
 	}
 	logging.Println(3, "Probing", "Probing done")
-	tester.print_resolver_data()
 }
 
 func (tester *Rate_tester) read_domain_list(max int) {
@@ -292,20 +301,18 @@ func (tester *Rate_tester) read_forwarders(fname string) bool {
 		}
 		// split csv columns
 		split := strings.Split(line, ";")
-		//if split[csv_response_type] != "Transparent Forwarder" {
+		//if split[csv_pos.response_type] != "Transparent Forwarder" {
 		//	continue
 		//}
-		//logging.Println(6, nil, "target-ip:", split[csv_target_ip], "response-ip:", split[csv_response_ip])
 		// add to resolver map
 		key := Resolver_key{resolver_ip: split[csv_pos.response_ip]}
 		resolver_entry, ok := tester.resolver_data[key]
 		if !ok {
 			tester.resolver_data[key] = &Resolver_entry{
-				resolver_ip:  net.ParseIP(split[csv_pos.response_ip]),
-				tfwd_ips:     make([]net.IP, 0),
-				rate_pos:     0,
-				rate_limiter: rate.NewLimiter(rate.Every(time.Duration(1000000/tester.rate_curve[0])*time.Microsecond), 1),
-				answer_data:  make([]Answer_entry, 0),
+				resolver_ip: net.ParseIP(split[csv_pos.response_ip]),
+				tfwd_ips:    make([]net.IP, 0),
+				rate_pos:    0,
+				rate_data:   make([]rate_data_s, 1),
 			}
 			resolver_entry = tester.resolver_data[key]
 		}
@@ -327,7 +334,7 @@ func (tester *Rate_tester) read_forwarders(fname string) bool {
 	if config.Cfg.Rate_mode == "probe" {
 		logging.Println(3, nil, "probe rate mode")
 		tester.find_active_fwds()
-		return false
+		tester.print_resolver_data()
 	} else if config.Cfg.Rate_mode == "direct" || config.Cfg.Rate_mode == "" {
 		logging.Println(3, nil, "direct rate mode")
 		tester.print_resolver_data()
@@ -341,9 +348,11 @@ func (tester *Rate_tester) read_forwarders(fname string) bool {
 	return true
 }
 
-func (tester *Rate_tester) rate_test_target(id int, entry *Resolver_entry) {
+func (tester *Rate_tester) rate_test_target_sub(id int, entry *Resolver_entry, subid int, wg *sync.WaitGroup) {
+	defer wg.Done()
 	var dnsid uint16 = 0 //TODO maybe make this id random
 	for {
+		entry.rate_sync.Add(1)
 		t_start := time.Now().UnixMicro()
 		// send for increase_interval ms
 		for time.Now().UnixMicro()-t_start < int64(config.Cfg.Rate_increase_interval)*1000 {
@@ -355,7 +364,7 @@ func (tester *Rate_tester) rate_test_target(id int, entry *Resolver_entry) {
 				hash.Write(time_bytes)
 				domain_prefix := hex.EncodeToString(hash.Sum(nil)[0:4])
 				query_domain = domain_prefix + "." + config.Cfg.Dns_query
-				logging.Println(6, "Sender "+strconv.Itoa(id), "using query domain:", query_domain)
+				logging.Println(6, "Sender "+strconv.Itoa(id)+"-"+strconv.Itoa(subid), "using query domain:", query_domain)
 			} else if config.Cfg.Domain_mode == "constant" {
 				query_domain = config.Cfg.Dns_query
 			} else if config.Cfg.Domain_mode == "list" || config.Cfg.Domain_mode == "inject" {
@@ -365,36 +374,69 @@ func (tester *Rate_tester) rate_test_target(id int, entry *Resolver_entry) {
 			}
 			//TODO check if ip on blocklist
 			// entry.tfwd_ips[entry.tfwd_pool_pos]
-			logging.Println(6, "Sender "+strconv.Itoa(id), "sending dns to", entry.tfwd_ips[entry.tfwd_pool_pos].String(), ",resolver", entry.resolver_ip.String())
-			tester.Send_udp_pkt(tester.Build_dns(entry.tfwd_ips[entry.tfwd_pool_pos], layers.UDPPort(entry.outport), dnsid, query_domain))
+			port := (int(entry.outport)-int(config.Cfg.Port_min)+subid)%int(config.Cfg.Port_max-config.Cfg.Port_min) + int(config.Cfg.Port_min)
+			if config.Cfg.Rate_concurrent_pool {
+				logging.Println(6, "Sender "+strconv.Itoa(id)+"-"+strconv.Itoa(subid), "sending dns to", entry.tfwd_ips[subid].String(), ",resolver", entry.resolver_ip.String())
+				tester.Send_udp_pkt(tester.Build_dns(entry.tfwd_ips[subid], layers.UDPPort(port), dnsid, query_domain))
+			} else {
+				logging.Println(6, "Sender "+strconv.Itoa(id)+"-"+strconv.Itoa(subid), "sending dns to", entry.tfwd_ips[entry.tfwd_pool_pos].String(), ",resolver", entry.resolver_ip.String())
+				tester.Send_udp_pkt(tester.Build_dns(entry.tfwd_ips[entry.tfwd_pool_pos], layers.UDPPort(port), dnsid, query_domain))
+				entry.tfwd_pool_pos = (entry.tfwd_pool_pos + 1) % len(entry.tfwd_ips)
+			}
 			dnsid++
-			entry.tfwd_pool_pos = (entry.tfwd_pool_pos + 1) % len(entry.tfwd_ips)
-			r := entry.rate_limiter.Reserve()
+			r := entry.rate_data[subid].rate_limiter.Reserve()
 			if !r.OK() {
 				log.Println("Rate limit exceeded")
 			}
 			time.Sleep(r.Delay())
 		}
-		entry.calc_last_second_rate()
-		logging.Println(5, "Sender "+strconv.Itoa(id), "last calculated rate is ", entry.moving_avg_rate)
+		entry.rate_data[subid].calc_last_second_rate()
+		logging.Println(5, "Sender "+strconv.Itoa(id)+"-"+strconv.Itoa(subid), "last calculated rate is", entry.rate_data[subid].moving_avg_rate)
 		// set rate limiter to next value
 		if entry.rate_pos == len(tester.rate_curve)-1 {
-			logging.Println(5, "Sender "+strconv.Itoa(id), "rate curve exhausted")
+			logging.Println(5, "Sender "+strconv.Itoa(id)+"-"+strconv.Itoa(subid), "rate curve exhausted")
 			break
 		}
-		if entry.moving_avg_rate < config.Cfg.Rate_receive_threshold*float64(tester.rate_curve[entry.rate_pos]) {
-			logging.Println(5, "Sender "+strconv.Itoa(id), "receiving rate too small, quitting")
+		// TODO remove threshold and instead just check if increasing the tx rate gives a certain increase in rx rate
+		if entry.rate_data[subid].moving_avg_rate < config.Cfg.Rate_receive_threshold*float64(tester.rate_curve[entry.rate_pos]) {
+			logging.Println(5, "Sender "+strconv.Itoa(id)+"-"+strconv.Itoa(subid), "receiving rate too small, quitting")
 			break
 		}
-		entry.rate_pos++
-		logging.Println(5, "Sender "+strconv.Itoa(id), "rate up", tester.rate_curve[entry.rate_pos], "Pkts/s")
-		entry.rate_limiter.SetLimit(rate.Every(time.Duration(1000000/tester.rate_curve[entry.rate_pos]) * time.Microsecond))
+		var locked bool = entry.rate_mu.TryLock()
+		entry.rate_sync.Done()
+		entry.rate_sync.Wait()
+		if locked {
+			entry.rate_pos++
+			entry.rate_mu.Unlock()
+		}
+		logging.Println(5, "Sender "+strconv.Itoa(id)+"-"+strconv.Itoa(subid), "rate up", tester.rate_curve[entry.rate_pos], "Pkts/s")
+		entry.rate_data[subid].rate_limiter.SetLimit(rate.Every(time.Duration(1000000/tester.rate_curve[entry.rate_pos]) * time.Microsecond))
+	}
+	entry.rate_sync.Done()
+}
+
+func (tester *Rate_tester) rate_test_target(id int, entry *Resolver_entry) {
+	var wg sync.WaitGroup
+	if config.Cfg.Rate_concurrent_pool {
+		for i := 0; i < len(entry.tfwd_ips); i++ {
+			wg.Add(1)
+			go tester.rate_test_target_sub(id, entry, i, &wg)
+		}
+		wg.Wait()
+	} else {
+		wg.Add(1)
+		tester.rate_test_target_sub(id, entry, 0, &wg)
 	}
 	// calc final rate
-	entry.calc_last_second_rate()
-	logging.Println(4, "Sender "+strconv.Itoa(id), "final avg rate for ", entry.resolver_ip, "is", entry.moving_avg_rate, "Pkts/s")
-	logging.Println(4, "Sender "+strconv.Itoa(id), "max rate for ", entry.resolver_ip, "is", entry.max_rate, "Pkts/s")
-	// TODO test stability at max rate
+	entry.acc_max_rate = 0
+	entry.acc_avg_rate = 0
+	for i := 0; i < len(entry.rate_data); i++ {
+		entry.acc_max_rate += int(entry.rate_data[i].max_rate)
+		entry.acc_avg_rate += int(entry.rate_data[i].moving_avg_rate)
+	}
+	logging.Println(4, "Sender "+strconv.Itoa(id), "final avg rate for ", entry.resolver_ip, "is", entry.acc_avg_rate, "Pkts/s")
+	logging.Println(4, "Sender "+strconv.Itoa(id), "max rate for ", entry.resolver_ip, "is", entry.acc_max_rate, "Pkts/s")
+	// TODO test stability at max rate, add config variable
 }
 
 func (tester *Rate_tester) send_packets(id int) {
@@ -415,12 +457,26 @@ func (tester *Rate_tester) send_packets(id int) {
 		delete(tester.resolver_data, key)
 		outport := tester.current_port
 		entry.outport = (uint16)(outport)
-		tester.current_port++
-		if tester.current_port > uint32(config.Cfg.Port_max) {
-			tester.current_port = uint32(config.Cfg.Port_min)
+		if config.Cfg.Rate_concurrent_pool {
+			tester.current_port += uint32(len(entry.tfwd_ips))
+		} else {
+			tester.current_port++
 		}
-		act_key := Active_key{port: uint16(outport)}
-		tester.active_resolvers[act_key] = entry
+		if tester.current_port > uint32(config.Cfg.Port_max) {
+			tester.current_port -= uint32(config.Cfg.Port_max-config.Cfg.Port_min) + 1
+		}
+		if config.Cfg.Rate_concurrent_pool {
+			entry.rate_data = make([]rate_data_s, len(entry.tfwd_ips))
+			for i := 0; i < len(entry.tfwd_ips); i++ {
+				entry.rate_data[i].rate_limiter = rate.NewLimiter(rate.Every(time.Duration(1000000/tester.rate_curve[0])*time.Microsecond), 1)
+				act_key := Active_key{port: uint16(int(outport) + i)}
+				tester.active_resolvers[act_key] = entry
+			}
+		} else {
+			entry.rate_data[0].rate_limiter = rate.NewLimiter(rate.Every(time.Duration(1000000/tester.rate_curve[0])*time.Microsecond), 1)
+			act_key := Active_key{port: uint16(outport)}
+			tester.active_resolvers[act_key] = entry
+		}
 		tester.resolver_counter++
 		tester.resolver_mu.Unlock()
 		logging.Println(4, "Sender "+strconv.Itoa(id), "rate limit testing resolver", tester.resolver_counter, entry.resolver_ip, "on port", outport)
@@ -428,7 +484,15 @@ func (tester *Rate_tester) send_packets(id int) {
 		tester.rate_test_target(id, entry)
 		tester.finished_resolvers <- entry
 		tester.resolver_mu.Lock()
-		delete(tester.active_resolvers, act_key)
+		if config.Cfg.Rate_concurrent_pool {
+			for i := 0; i < len(entry.tfwd_ips); i++ {
+				act_key := Active_key{port: uint16(int(outport) + i)}
+				delete(tester.active_resolvers, act_key)
+			}
+		} else {
+			act_key := Active_key{port: uint16(outport)}
+			delete(tester.active_resolvers, act_key)
+		}
 		tester.resolver_mu.Unlock()
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -472,18 +536,19 @@ func (tester *Rate_tester) Handle_pkt(pkt gopacket.Packet) {
 	// check if item in map and assign value
 	tester.resolver_mu.Lock()
 	rate_entry, ok := tester.active_resolvers[Active_key{port: uint16(udp.DstPort)}]
+	subid := uint16(udp.DstPort) - rate_entry.outport
 	tester.resolver_mu.Unlock()
 	if !ok {
 		logging.Println(6, nil, "got DNS but cant find related resolver")
 		return
 	}
-	rate_entry.answer_mu.Lock()
+	rate_entry.rate_data[subid].answer_mu.Lock()
 	ans_entry := Answer_entry{
 		ts:               rec_time,
 		dns_payload_size: len(pld),
 	}
-	rate_entry.answer_data = append(rate_entry.answer_data, ans_entry)
-	rate_entry.answer_mu.Unlock()
+	rate_entry.rate_data[subid].answer_data = append(rate_entry.rate_data[subid].answer_data, ans_entry)
+	rate_entry.rate_data[subid].answer_mu.Unlock()
 }
 
 func (tester *Rate_tester) inject_cache() {
