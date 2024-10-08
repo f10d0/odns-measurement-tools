@@ -129,6 +129,17 @@ func (tester *Rate_tester) write_results(out_path string) {
 			record = append(record, strconv.Itoa(int(entry.acc_max_rate)))
 			record = append(record, strconv.Itoa(int(entry.acc_avg_rate)))
 			csv_writer.Write(record)
+
+			if config.Cfg.Rate_concurrent_pool {
+				record = make([]string, 0)
+				for idx, data := range entry.rate_data {
+					record = append(record, "rate-data")
+					record = append(record, strconv.Itoa(idx))
+					record = append(record, string(entry.tfwd_ips[idx]))
+					record = append(record, strconv.Itoa((int)(data.max_rate)))
+					csv_writer.Write(record)
+				}
+			}
 			// line 2: ts 1?
 			// line 3: ts 2
 			// ...
@@ -156,7 +167,6 @@ func (tester *Rate_tester) print_resolver_data() {
 			fwd_strs = append(fwd_strs, fwd.String())
 		}
 		logging.Println(5, "Resolver Data", "Resolver-IP:", v.resolver_ip, "Fwds:", fwd_strs)
-		//fmt.Println("Resolver Data", "Resolver-IP:", v.resolver_ip, "Fwds:", fwd_strs)
 	}
 }
 
