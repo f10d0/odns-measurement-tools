@@ -45,6 +45,12 @@ type Base_scanner struct {
 }
 
 func (bs *Base_scanner) Scanner_init() {
+	bs.Scanner_init_internal()
+
+	go bs.Handle_ctrl_c()
+}
+
+func (bs *Base_scanner) Scanner_init_internal() {
 	bs.Base_init()
 	bs.Blocked_nets = []*net.IPNet{}
 	bs.Write_chan = make(chan *Scan_data_item, 4096)
@@ -52,8 +58,6 @@ func (bs *Base_scanner) Scanner_init() {
 		Items: make(map[scan_item_key]Scan_data_item),
 	}
 	bs.Result_data_internal = make([]Scan_data_item, 0)
-
-	go bs.Handle_ctrl_c()
 	bs.Exclude_ips()
 }
 

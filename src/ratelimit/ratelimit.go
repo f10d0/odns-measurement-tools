@@ -199,7 +199,7 @@ func (tester *Rate_tester) find_active_fwds() {
 	logging.Println(3, "Probing", "Probing for active forwarders")
 	var mask uint32 = 0xffffff00
 	var config_backup config.Cfg_db = config.Cfg
-	//config.Cfg.Verbosity = 4
+	config.Cfg.Verbosity = 4
 	config.Cfg.Pkts_per_sec = 20000
 
 	// Find all the nets to scan

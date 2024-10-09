@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
+	"golang.org/x/time/rate"
 )
 
 type Udp_scanner struct {
@@ -333,7 +334,7 @@ func (udps *Udp_scanner) Start_scan(args []string, outpath string) {
 }
 
 func (udps *Udp_scanner) Start_internal(nets []net.IP, hostsize int) []scanner.Scan_data_item {
-	udps.Scanner_init()
+	udps.Scanner_init_internal()
 	udps.Sender_init()
 	udps.L2_sender = &udps.L2
 	udps.Scanner_methods = udps
@@ -345,6 +346,7 @@ func (udps *Udp_scanner) Start_internal(nets []net.IP, hostsize int) []scanner.S
 		port:  config.Cfg.Port_min,
 		dnsid: 0,
 	}
+	udps.Send_limiter = rate.NewLimiter(rate.Every(time.Duration(1000000/config.Cfg.Pkts_per_sec)*time.Microsecond), 1)
 
 	//udps.Bind_ports()
 	// set the DNS_PAYLOAD_SIZE once as it is static
