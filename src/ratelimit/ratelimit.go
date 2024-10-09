@@ -135,19 +135,29 @@ func (tester *Rate_tester) write_results(out_path string) {
 					record = append(record, entry.tfwd_ips[idx].String())
 					record = append(record, strconv.Itoa((int)(data.max_rate)))
 					csv_writer.Write(record)
-
+				}
+				for idx, data := range entry.rate_data {
+					for _, ans_entry := range data.answer_data {
+						record = make([]string, 0)
+						record = append(record, "dns-response")
+						record = append(record, entry.tfwd_ips[idx].String())
+						record = append(record, strconv.FormatInt(ans_entry.ts, 10))
+						record = append(record, strconv.Itoa(ans_entry.dns_payload_size))
+						csv_writer.Write(record)
+					}
+				}
+			} else {
+				// line 2: ts 1?
+				// line 3: ts 2
+				// ...
+				// line n: ts n
+				for _, ans_entry := range entry.rate_data[0].answer_data {
+					record = make([]string, 2)
+					record[0] = strconv.FormatInt(ans_entry.ts, 10)
+					record[1] = strconv.Itoa(ans_entry.dns_payload_size)
+					csv_writer.Write(record)
 				}
 			}
-			// line 2: ts 1?
-			// line 3: ts 2
-			// ...
-			// line n: ts n
-			/*for _, ans_entry := range entry.answer_data {
-				record = make([]string, 2)
-				record[0] = strconv.FormatInt(ans_entry.ts, 10)
-				record[1] = strconv.Itoa(ans_entry.dns_payload_size)
-				csv_writer.Write(record)
-			}*/
 
 			csv_writer.Flush()
 			zip_writer.Close()
