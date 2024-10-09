@@ -606,12 +606,50 @@ func (tester *Rate_tester) inject_cache() {
 	// summon go routines
 	for i := 0; i < int(config.Cfg.Rate_inject_routines); i++ {
 		tester.sender_wg.Add(1)
-
 		// iterate all resolvers
-		// per resolver iterate all 1k domains
-		// apply send limit of 100pps
-		// ignore responses?
+		var resolver_data_copy map[Resolver_key]*Resolver_entry = make(map[Resolver_key]*Resolver_entry)
+		for k, v := range tester.resolver_data {
+			resolver_data_copy[k] = v
+		}
+		go func(id int) {
+			defer tester.sender_wg.Done()
+			var dnsid uint16 = 0
+			var rate_limiter *rate.Limiter = rate.NewLimiter(rate.Every(time.Duration(1000000/config.Cfg.Rate_inject_speed)*time.Microsecond), 1)
+			outport := tester.current_port
+			for { // iterate resolvers
+				tester.resolver_mu.Lock()
+				if len(resolver_data_copy) == 0 {
+					tester.resolver_mu.Unlock()
+					logging.Println(5, "Cache-Injector "+strconv.Itoa(id), "list exhausted, returning")
+					return
+				}
+				var key Resolver_key
+				for key = range resolver_data_copy {
+					break
+				}
+				entry := resolver_data_copy[key] // next resolver
+				delete(resolver_data_copy, key)
+				tester.resolver_mu.Unlock()
+				logging.Println(5, "Cache-Injector "+strconv.Itoa(id), "resolver", entry.resolver_ip.String())
+				for _, tfwd := range entry.tfwd_ips { // iterate over all twfds of this resolver
+					logging.Println(5, "Cache-Injector "+strconv.Itoa(id), "injecting fwd", tfwd.String(), "to resolver", entry.resolver_ip.String())
+					for _, query_domain := range tester.domains {
+						// per resolver iterate all 1k domains
+						logging.Println(6, "Cache-Injector "+strconv.Itoa(id), "sending dns to", tfwd, ",resolver", entry.resolver_ip.String())
+						tester.Send_udp_pkt(tester.Build_dns(tfwd, layers.UDPPort(outport), dnsid, query_domain))
+
+						dnsid++
+						r := rate_limiter.Reserve()
+						if !r.OK() {
+							log.Println("Rate limit exceeded")
+						}
+						time.Sleep(r.Delay())
+					}
+				}
+			}
+		}(i)
 	}
+	tester.sender_wg.Wait()
 	logging.Println(3, "cache injection", "done")
 }
 
