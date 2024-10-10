@@ -110,7 +110,6 @@ func (tester *Rate_tester) write_results(out_path string) {
 	for {
 		select {
 		case entry := <-tester.finished_resolvers:
-			// TODO concurrent_pool
 			csvfile, err := os.Create(path.Join(out_path, entry.resolver_ip.String()+".csv.gz"))
 			if err != nil {
 				panic(err)
@@ -548,7 +547,6 @@ func (tester *Rate_tester) send_packets(id int) {
 }
 
 func (tester *Rate_tester) Handle_pkt(pkt gopacket.Packet) {
-	// TODO check public resolvers with tfwds and w/o
 	rec_time := time.Now().UnixMicro()
 	ip_layer := pkt.Layer(layers.LayerTypeIPv4)
 	if ip_layer == nil {
@@ -603,14 +601,14 @@ func (tester *Rate_tester) Handle_pkt(pkt gopacket.Packet) {
 
 func (tester *Rate_tester) inject_cache() {
 	logging.Println(3, "cache injection", "starting")
+	var resolver_data map[Resolver_key]*Resolver_entry = make(map[Resolver_key]*Resolver_entry)
+	for k, v := range tester.resolver_data {
+		resolver_data[k] = v
+	}
 	// summon go routines
 	for i := 0; i < int(config.Cfg.Rate_inject_routines); i++ {
 		tester.sender_wg.Add(1)
 		// iterate all resolvers
-		var resolver_data_copy map[Resolver_key]*Resolver_entry = make(map[Resolver_key]*Resolver_entry)
-		for k, v := range tester.resolver_data {
-			resolver_data_copy[k] = v
-		}
 		go func(id int) {
 			defer tester.sender_wg.Done()
 			var dnsid uint16 = 0
@@ -618,17 +616,17 @@ func (tester *Rate_tester) inject_cache() {
 			outport := tester.current_port
 			for { // iterate resolvers
 				tester.resolver_mu.Lock()
-				if len(resolver_data_copy) == 0 {
+				if len(resolver_data) == 0 {
 					tester.resolver_mu.Unlock()
 					logging.Println(5, "Cache-Injector "+strconv.Itoa(id), "list exhausted, returning")
 					return
 				}
 				var key Resolver_key
-				for key = range resolver_data_copy {
+				for key = range resolver_data {
 					break
 				}
-				entry := resolver_data_copy[key] // next resolver
-				delete(resolver_data_copy, key)
+				entry := (resolver_data)[key] // next resolver
+				delete(resolver_data, key)
 				tester.resolver_mu.Unlock()
 				logging.Println(5, "Cache-Injector "+strconv.Itoa(id), "resolver", entry.resolver_ip.String())
 				for _, tfwd := range entry.tfwd_ips { // iterate over all twfds of this resolver
