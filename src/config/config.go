@@ -74,6 +74,7 @@ type Cfg_db struct {
 	// the number of go routines to use during the cache injection phase
 	// example: approx 60000 resolvers, with 1000 routines at 100pps (=10s per resolver with 1k domains) -> 10min injection time
 	Rate_inject_routines int `yaml:"rate_inject_routines" env-default:"1000"`
+	Rate_inject_max_fwds int `yaml:"rate_inject_max_fwds" env-default:"50"`
 	// ignore the target-ips of the input file and test the response-ips directly
 	Rate_response_ip_only bool `yaml:"rate_response_ip_only" env-default:"false"`
 	// will summon a routine for each ip of the tfwd_pool to test concurrently at the same rate

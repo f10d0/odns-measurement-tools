@@ -629,7 +629,10 @@ func (tester *Rate_tester) inject_cache() {
 				delete(resolver_data, key)
 				tester.resolver_mu.Unlock()
 				logging.Println(5, "Cache-Injector "+strconv.Itoa(id), "resolver", entry.resolver_ip.String())
-				for _, tfwd := range entry.tfwd_ips { // iterate over all twfds of this resolver
+				for idx, tfwd := range entry.tfwd_ips { // iterate over all twfds of this resolver
+					if idx > config.Cfg.Rate_inject_max_fwds {
+						break
+					}
 					logging.Println(5, "Cache-Injector "+strconv.Itoa(id), "injecting fwd", tfwd.String(), "to resolver", entry.resolver_ip.String())
 					for _, query_domain := range tester.domains {
 						// per resolver iterate all 1k domains
