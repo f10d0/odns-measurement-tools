@@ -17,6 +17,8 @@ type Cfg_db struct {
 	Dst_port uint16 `yaml:"dst_port" env-default:"53"`
 	// the dns query name to use during scanning
 	Dns_query string `yaml:"dns_query"`
+	// dns query type (only affects UDP)
+	Dns_query_type string `yaml:"dns_query_type" env-default:"A"`
 	// list of ips or subnets in CIDR notation to exclude from the scan
 	Excl_ips_fname string `yaml:"exclude_ips_fname"`
 	// maximum pps to *send*

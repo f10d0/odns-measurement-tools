@@ -104,7 +104,7 @@ func (entry *rate_data_s) calc_last_second_rate() {
 
 func (tester *Rate_tester) write_results(out_path string) {
 	formatted_ts := time.Now().UTC().Format("2006-01-02_15-04-05")
-	out_path = path.Join(out_path, fmt.Sprintf("%s_rm-%s_dm-%s_incr-%s", formatted_ts, config.Cfg.Rate_mode, config.Cfg.Domain_mode, strconv.Itoa(config.Cfg.Rate_increase_interval)))
+	out_path = path.Join(out_path, fmt.Sprintf("%s_rm-%s_dm-%s_incr-%sms_max-rate-%spps", formatted_ts, config.Cfg.Rate_mode, config.Cfg.Domain_mode, strconv.Itoa(config.Cfg.Rate_increase_interval), strconv.Itoa(tester.rate_curve[len(tester.rate_curve)-1])))
 	// TODO output config as txt file in folder
 	os.MkdirAll(out_path, os.ModePerm)
 	for {
@@ -638,7 +638,6 @@ func (tester *Rate_tester) inject_cache() {
 						// per resolver iterate all 1k domains
 						logging.Println(6, "Cache-Injector "+strconv.Itoa(id), "sending dns to", tfwd, ",resolver", entry.resolver_ip.String())
 						tester.Send_udp_pkt(tester.Build_dns(tfwd, layers.UDPPort(outport), dnsid, query_domain))
-
 						dnsid++
 						r := rate_limiter.Reserve()
 						if !r.OK() {
@@ -714,7 +713,8 @@ func (tester *Rate_tester) Start_ratetest(args []string, outpath string) {
 	tester.sender_wg.Wait()
 	logging.Println(3, nil, "Sending completed")
 
-	time.Sleep(5 * time.Second)
+	// TODO fix, the output file is cut off
+	time.Sleep(20 * time.Second)
 	close(tester.Stop_chan)
 	handle.Close()
 

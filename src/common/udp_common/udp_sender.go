@@ -11,9 +11,15 @@ import (
 	"golang.org/x/net/ipv4"
 )
 
+const (
+	DNSTypeDNSKEY uint16 = 48
+	DNSTypeANY    uint16 = 255
+)
+
 type Udp_sender struct {
 	L2_sender  *common.RawL2
 	L3_Raw_con *ipv4.RawConn
+	DNS_type   uint16
 }
 
 func (sender *Udp_sender) Sender_init() {
@@ -27,11 +33,24 @@ func (sender *Udp_sender) Sender_init() {
 	if err != nil {
 		panic(err)
 	}
+	// set dns type
+	switch config.Cfg.Dns_query_type {
+	case "A":
+		sender.DNS_type = uint16(layers.DNSTypeA)
+	case "AAAA":
+		sender.DNS_type = uint16(layers.DNSTypeAAAA)
+	case "DNSKEY":
+		sender.DNS_type = DNSTypeDNSKEY
+	case "ANY":
+		sender.DNS_type = DNSTypeANY
+	default:
+		panic("wrong DNS query type")
+	}
 }
 
 func (sender *Udp_sender) Send_udp_pkt(ip layers.IPv4, udp layers.UDP, payload []byte) {
 	if config.Cfg.Craft_ethernet {
-		logging.Println(6, nil, "Layer 2 send")
+		logging.Println(6, "Send", "Layer 2 send")
 		buffer := gopacket.NewSerializeBuffer()
 		if err := gopacket.SerializeLayers(buffer, common.Opts,
 			&ip,
@@ -43,7 +62,7 @@ func (sender *Udp_sender) Send_udp_pkt(ip layers.IPv4, udp layers.UDP, payload [
 
 		sender.L2_sender.Send(buffer.Bytes())
 	} else {
-		logging.Println(6, nil, "Layer 3 send")
+		logging.Println(6, "Send", "Layer 3 send")
 		ip_head_buf := gopacket.NewSerializeBuffer()
 		err := ip.SerializeTo(ip_head_buf, common.Opts)
 		if err != nil {
@@ -88,15 +107,23 @@ func (sender *Udp_sender) Build_dns(dst_ip net.IP, src_port layers.UDPPort, dnsi
 	// create dns layers
 	qst := layers.DNSQuestion{
 		Name:  []byte(query),
-		Type:  layers.DNSTypeA,
+		Type:  layers.DNSType(sender.DNS_type),
 		Class: layers.DNSClassIN,
 	}
+	// TODO if DNSTypeDNSKEY also request DNSSEC RRSIG
+	optRecord := layers.DNSResourceRecord{
+		Type:  layers.DNSTypeOPT,
+		Class: 4096, // Typically used to indicate a UDP payload size (e.g., 4096 bytes)
+	}
+
 	dns := layers.DNS{
-		Questions: []layers.DNSQuestion{qst},
-		RD:        true,
-		QDCount:   1,
-		OpCode:    layers.DNSOpCodeQuery,
-		ID:        dnsid,
+		Questions:   []layers.DNSQuestion{qst},
+		RD:          true,
+		QDCount:     1,
+		OpCode:      layers.DNSOpCodeQuery,
+		ID:          dnsid,
+		Additionals: []layers.DNSResourceRecord{optRecord},
+		ARCount:     1,
 	}
 
 	dns_buf := gopacket.NewSerializeBuffer()

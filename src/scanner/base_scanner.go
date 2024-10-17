@@ -132,7 +132,7 @@ func (bs *Base_scanner) Get_cidr_filename(cidr_filename string) (fname string, n
 		hostsize = 32 - ones
 	} else {
 		logging.Write_to_runlog("END " + time.Now().UTC().String() + " wrongly formatted input arg")
-		logging.Println(1, nil, "ERR check your input arg (filename or CIDR notation)")
+		logging.Println(1, "Input", "ERR check your input arg (filename or CIDR notation)")
 		os.Exit(int(common.WRONG_INPUT_ARGS))
 	}
 	return
@@ -140,7 +140,7 @@ func (bs *Base_scanner) Get_cidr_filename(cidr_filename string) (fname string, n
 
 func (bs *Base_scanner) Exclude_ips() {
 	if _, err := os.Stat(config.Cfg.Excl_ips_fname); errors.Is(err, os.ErrNotExist) {
-		logging.Println(2, nil, "ip exclusion list [", config.Cfg.Excl_ips_fname, "] not found, skipping")
+		logging.Println(2, "Exclude", "ip exclusion list [", config.Cfg.Excl_ips_fname, "] not found, skipping")
 		return
 	}
 	file, err := os.Open(config.Cfg.Excl_ips_fname)
@@ -169,7 +169,7 @@ func (bs *Base_scanner) Exclude_ips() {
 		if err != nil { // if there are errors try if the string maybe is a single ip
 			toblock_ip := net.ParseIP(pos_net)
 			if toblock_ip == nil {
-				logging.Println(3, nil, "could not interpret line, skipping")
+				logging.Println(3, "Exclude", "could not interpret line, skipping")
 				continue
 			}
 			mask := net.CIDRMask(32, 32) // 32 bits for IPv4
@@ -177,7 +177,7 @@ func (bs *Base_scanner) Exclude_ips() {
 		}
 
 		bs.Blocked_nets = append(bs.Blocked_nets, new_net)
-		logging.Println(3, nil, "added blocked net:", new_net.String())
+		logging.Println(3, "Exclude", "added blocked net:", new_net.String())
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -211,7 +211,7 @@ func (bs *Base_scanner) Read_ips_file(fname string) {
 	// wait some time to send out SYNs & handle the responses
 	// of the IPs just read before ending the program
 	var wait_time int = len(bs.Ip_chan)/config.Cfg.Pkts_per_sec + 10
-	logging.Println(3, nil, "read all ips, waiting", wait_time, "seconds to end")
+	logging.Println(3, "Generator", "read all ips, waiting", wait_time, "seconds to end")
 	bs.Waiting_to_end = true
 	// time to wait until end based on packet rate + channel size
 	time.Sleep(time.Duration(wait_time) * time.Second)

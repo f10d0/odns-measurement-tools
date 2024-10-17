@@ -52,7 +52,7 @@ func Get_ether_handle(prot string) *pcapgo.EthernetHandle {
 		panic(err)
 	}
 	filter_string := fmt.Sprint("udp and ip dst ", config.Cfg.Iface_ip, " and src port ", config.Cfg.Dst_port)
-	logging.Println(5, nil, "filter string:", filter_string)
+	logging.Println(5, "Handle", "filter string:", filter_string)
 	bpf_instr, err := pcap.CompileBPFFilter(layers.LinkTypeEthernet, iface.MTU, filter_string)
 	if err != nil {
 		panic(err)

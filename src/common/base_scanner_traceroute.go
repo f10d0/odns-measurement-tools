@@ -88,7 +88,7 @@ func (st *Base) Base_init() {
 	st.Waiting_to_end = false
 	st.Send_limiter = rate.NewLimiter(rate.Every(time.Duration(1000000/config.Cfg.Pkts_per_sec)*time.Microsecond), 1)
 
-	logging.Println(6, nil, "iface name:", config.Cfg.Iface_name)
+	logging.Println(6, "Init", "iface name:", config.Cfg.Iface_name)
 	iface, err := net.InterfaceByName(config.Cfg.Iface_name)
 	if err != nil {
 		panic(err)
@@ -134,7 +134,7 @@ func (st *Base) Base_init() {
 
 func (st *Base) Packet_capture(handle *pcapgo.EthernetHandle) {
 	defer st.Wg.Done()
-	logging.Println(3, nil, "starting packet capture")
+	logging.Println(3, "Capture", "starting packet capture")
 	pkt_src := gopacket.NewPacketSource(
 		handle, layers.LinkTypeEthernet).Packets()
 	for {
@@ -142,7 +142,7 @@ func (st *Base) Packet_capture(handle *pcapgo.EthernetHandle) {
 		case pkt := <-pkt_src:
 			go st.Base_methods.Handle_pkt(pkt)
 		case <-st.Stop_chan:
-			logging.Println(3, nil, "stopping packet capture")
+			logging.Println(3, "Capture", "stopping packet capture")
 			return
 		}
 	}
@@ -165,7 +165,7 @@ func (st *Base) Handle_ctrl_c() {
 func (st *Base) Close_handle(handle *pcapgo.EthernetHandle) {
 	defer st.Wg.Done()
 	<-st.Stop_chan
-	logging.Println(3, nil, "closing handle")
+	logging.Println(3, "Handle", "closing handle")
 	handle.Close()
-	logging.Println(3, nil, "handle closed")
+	logging.Println(3, "Handle", "handle closed")
 }
