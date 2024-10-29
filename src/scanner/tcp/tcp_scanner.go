@@ -173,16 +173,7 @@ func (tcps *Tcp_scanner) Write_item(root_item *scanner.Scan_data_item) {
 	tcps.Scan_data.Mu.Unlock()
 }
 
-func (tcps *Tcp_scanner) Handle_pkt(pkt gopacket.Packet) {
-	ip_layer := pkt.Layer(layers.LayerTypeIPv4)
-	if ip_layer == nil {
-		return
-	}
-	ip, ok := ip_layer.(*layers.IPv4)
-	if !ok {
-		return
-	}
-
+func (tcps *Tcp_scanner) Handle_pkt(ip *layers.IPv4, pkt gopacket.Packet) {
 	tcp_layer := pkt.Layer(layers.LayerTypeTCP)
 	if tcp_layer == nil {
 		return
@@ -497,7 +488,7 @@ func (tcps *Tcp_scanner) Start_scan(args []string, outpath string) {
 	// set the DNS_PAYLOAD_SIZE once as it is static
 	_, _, dns_payload := tcps.Build_ack_with_dns(net.ParseIP("0.0.0.0"), 0, 0, 0)
 	tcps.DNS_PAYLOAD_SIZE = uint16(len(dns_payload))
-	handle := common.Get_ether_handle("tcp")
+	handle := common.Get_ether_handle()
 	// start packet capture as goroutine
 	tcps.Wg.Add(5)
 	go tcps.Packet_capture(handle)

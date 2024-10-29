@@ -546,16 +546,8 @@ func (tester *Rate_tester) send_packets(id int) {
 	}
 }
 
-func (tester *Rate_tester) Handle_pkt(pkt gopacket.Packet) {
+func (tester *Rate_tester) Handle_pkt(ip *layers.IPv4, pkt gopacket.Packet) {
 	rec_time := time.Now().UnixMicro()
-	ip_layer := pkt.Layer(layers.LayerTypeIPv4)
-	if ip_layer == nil {
-		return
-	}
-	_, ok := ip_layer.(*layers.IPv4)
-	if !ok {
-		return
-	}
 
 	udp_layer := pkt.Layer(layers.LayerTypeUDP)
 	if udp_layer == nil {
@@ -699,7 +691,7 @@ func (tester *Rate_tester) Start_ratetest(args []string, outpath string) {
 	}
 
 	// packet capture will call Handle_pkt
-	handle := common.Get_ether_handle("udp")
+	handle := common.Get_ether_handle()
 	tester.Wg.Add(1)
 	go tester.Packet_capture(handle)
 

@@ -23,7 +23,7 @@ import (
 type stop struct{}
 
 type IBase_methods interface {
-	Handle_pkt(pkt gopacket.Packet)
+	Handle_pkt(ip *layers.IPv4, pkt gopacket.Packet)
 }
 
 type RawL2 struct {
@@ -70,6 +70,11 @@ func (l2 *RawL2) Send(payload []byte) {
 	}
 }
 
+type fragment_buffer_s struct {
+	fragmap map[uint16][]gopacket.Packet
+	mu      sync.Mutex
+}
+
 type Base struct {
 	Wg               sync.WaitGroup
 	Base_methods     IBase_methods
@@ -80,6 +85,7 @@ type Base struct {
 	Send_limiter     *rate.Limiter
 	L2               RawL2
 	Writer           *csv.Writer
+	fragbuf          fragment_buffer_s
 }
 
 func (st *Base) Base_init() {
@@ -87,6 +93,7 @@ func (st *Base) Base_init() {
 	st.Ip_chan = make(chan net.IP, 1024)
 	st.Waiting_to_end = false
 	st.Send_limiter = rate.NewLimiter(rate.Every(time.Duration(1000000/config.Cfg.Pkts_per_sec)*time.Microsecond), 1)
+	st.fragbuf.fragmap = make(map[uint16][]gopacket.Packet)
 
 	logging.Println(6, "Init", "iface name:", config.Cfg.Iface_name)
 	iface, err := net.InterfaceByName(config.Cfg.Iface_name)
@@ -132,6 +139,74 @@ func (st *Base) Base_init() {
 	}
 }
 
+func (st *Base) Process_pkt(pkt gopacket.Packet) {
+	ip_layer := pkt.Layer(layers.LayerTypeIPv4)
+	if ip_layer == nil {
+		return
+	}
+	ip, ok := ip_layer.(*layers.IPv4)
+	if !ok {
+		return
+	}
+
+	// fragmentation
+	// more fragments or last fragment
+	if ip.Flags&0x1 == 1 || ip.FragOffset != 0 {
+		logging.Println(6, "Process-Pkt", "fragmented pkt received")
+		st.fragbuf.mu.Lock()
+		_, ok := st.fragbuf.fragmap[ip.Id]
+		if !ok {
+			st.fragbuf.fragmap[ip.Id] = make([]gopacket.Packet, 0)
+		}
+		st.fragbuf.fragmap[ip.Id] = append(st.fragbuf.fragmap[ip.Id], pkt)
+
+		// check all received O(n^2)
+		var transp_pkt []byte = make([]byte, 0)
+		var last_seen bool
+		for range st.fragbuf.fragmap[ip.Id] {
+			frag_seen := false
+			for _, fragpkt := range st.fragbuf.fragmap[ip.Id] {
+				ip_layer_frag := fragpkt.Layer(layers.LayerTypeIPv4)
+				ip_frag, _ := ip_layer_frag.(*layers.IPv4)
+				if ip_frag.FragOffset != 0 && ip_frag.Flags&0x1 == 0 {
+					last_seen = true
+				}
+				if int(ip_frag.FragOffset)<<3 == len(transp_pkt) {
+					transp_pkt = append(transp_pkt, ip_frag.LayerPayload()...)
+					frag_seen = true
+					break
+				}
+			}
+			if !frag_seen {
+				logging.Println(6, "Process-Pkt", "fragment not seen, transp_size:", len(transp_pkt))
+				st.fragbuf.mu.Unlock()
+				return
+			}
+		}
+		if !last_seen {
+			// bail if not all fragments yet
+			st.fragbuf.mu.Unlock()
+			logging.Println(6, "Process-Pkt", "not all fragments seen yet")
+			return
+		}
+		// remove from map
+		delete(st.fragbuf.fragmap, ip.Id)
+		st.fragbuf.mu.Unlock()
+
+		logging.Println(6, "Process-Pkt", "all fragments seen")
+		switch ip.Protocol {
+		case layers.IPProtocolUDP:
+			pkt = gopacket.NewPacket(transp_pkt, layers.LayerTypeUDP, gopacket.Default)
+		case layers.IPProtocolTCP:
+			pkt = gopacket.NewPacket(transp_pkt, layers.LayerTypeTCP, gopacket.Default)
+		default:
+			return
+		}
+	}
+
+	st.Base_methods.Handle_pkt(ip, pkt)
+}
+
 func (st *Base) Packet_capture(handle *pcapgo.EthernetHandle) {
 	defer st.Wg.Done()
 	logging.Println(3, "Capture", "starting packet capture")
@@ -140,7 +215,7 @@ func (st *Base) Packet_capture(handle *pcapgo.EthernetHandle) {
 	for {
 		select {
 		case pkt := <-pkt_src:
-			go st.Base_methods.Handle_pkt(pkt)
+			go st.Process_pkt(pkt)
 		case <-st.Stop_chan:
 			logging.Println(3, "Capture", "stopping packet capture")
 			return

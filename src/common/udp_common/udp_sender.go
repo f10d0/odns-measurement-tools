@@ -6,6 +6,8 @@ import (
 	"dns_tools/logging"
 	"net"
 
+	"math/rand"
+
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"golang.org/x/net/ipv4"
@@ -94,7 +96,7 @@ func (sender *Udp_sender) Build_dns(dst_ip net.IP, src_port layers.UDPPort, dnsi
 		SrcIP:    net.ParseIP(config.Cfg.Iface_ip),
 		DstIP:    dst_ip,
 		Protocol: layers.IPProtocolUDP,
-		Id:       1,
+		Id:       uint16(rand.Intn(65536)),
 	}
 
 	// Create udp layer
@@ -113,7 +115,7 @@ func (sender *Udp_sender) Build_dns(dst_ip net.IP, src_port layers.UDPPort, dnsi
 	// TODO if DNSTypeDNSKEY also request DNSSEC RRSIG
 	optRecord := layers.DNSResourceRecord{
 		Type:  layers.DNSTypeOPT,
-		Class: 4096, // Typically used to indicate a UDP payload size (e.g., 4096 bytes)
+		Class: 8192, // Typically used to indicate a UDP payload size (e.g., 4096 bytes)
 	}
 
 	dns := layers.DNS{
