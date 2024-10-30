@@ -572,6 +572,14 @@ func (tester *Rate_tester) Handle_pkt(ip *layers.IPv4, pkt gopacket.Packet) {
 		return
 	}
 	logging.Println(6, nil, "got DNS response")
+	if dns.ResponseCode == layers.DNSResponseCodeNotImp {
+		return
+	}
+	for _, answer := range dns.Answers {
+		if answer.Type == layers.DNSTypeHINFO {
+			return
+		}
+	}
 	// check if item in map and assign value
 	tester.resolver_mu.Lock()
 	rate_entry, ok := tester.active_resolvers[Active_key{port: uint16(udp.DstPort)}]
