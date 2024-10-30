@@ -575,6 +575,10 @@ func (tester *Rate_tester) Handle_pkt(ip *layers.IPv4, pkt gopacket.Packet) {
 	if dns.ResponseCode == layers.DNSResponseCodeNotImp {
 		return
 	}
+	if len(dns.Answers) == 0 {
+		//ignore empty replies
+		return
+	}
 	for _, answer := range dns.Answers {
 		if answer.Type == layers.DNSTypeHINFO {
 			return
