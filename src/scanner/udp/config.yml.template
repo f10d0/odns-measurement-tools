@@ -3,6 +3,7 @@ iface_ip: <ip>
 dst_port: 53
 dns_query: <domain>
 dns_query_type: A
+dnssec_enabled: false
 exclude_ips_fname: exclude_ips.txt
 pkts_per_sec: 100000
 port_min: 61440

@@ -112,10 +112,12 @@ func (sender *Udp_sender) Build_dns(dst_ip net.IP, src_port layers.UDPPort, dnsi
 		Type:  layers.DNSType(sender.DNS_type),
 		Class: layers.DNSClassIN,
 	}
-	// TODO if DNSTypeDNSKEY also request DNSSEC RRSIG
 	optRecord := layers.DNSResourceRecord{
 		Type:  layers.DNSTypeOPT,
-		Class: 8192, // Typically used to indicate a UDP payload size (e.g., 4096 bytes)
+		Class: 4096, // Typically used to indicate a UDP payload size (e.g., 4096 bytes)
+	}
+	if config.Cfg.Dnssec_enabled {
+		optRecord.TTL = 1 << 15
 	}
 
 	dns := layers.DNS{
