@@ -126,7 +126,7 @@ func scan_item_to_strarr(scan_item *Udp_scan_data_item) []string {
 	// dns packet size
 	record = append(record, strconv.Itoa(scan_item.Dns_payload_size))
 	dns_recs_str := ""
-	if config.Cfg.Dns_query_type == "ANY" || config.Cfg.Dns_query_type == "DNSKEY" {
+	if config.Cfg.Log_dnsrecs {
 		for i, rr := range scan_item.Dns_recs {
 			logging.Println(6, "DNS-Response", "rec:"+rr.String())
 			dns_recs_str += fmt.Sprintf("%s-%s", rr.Type, base64.StdEncoding.EncodeToString(rr.Data))
@@ -198,7 +198,10 @@ func (udps *Udp_scanner) Handle_pkt(ip *layers.IPv4, pkt gopacket.Packet) {
 			log.Fatal("cast failed, wrong type")
 		}
 		udp_scan_item.Answerip = ip.SrcIP
-		udp_scan_item.Dns_recs = append(udp_scan_item.Dns_recs, dns.Answers...)
+		if len(dns.Answers) != 0 {
+			// TODO fix the segfault here
+			udp_scan_item.Dns_recs = append(udp_scan_item.Dns_recs, dns.Answers...)
+		}
 		udp_scan_item.Dns_flags = (uint16)(udp.LayerPayload()[2])<<8 | (uint16)(udp.LayerPayload()[3])
 		udp_scan_item.Dns_payload_size = len(udp.LayerPayload())
 		// queue for writeout

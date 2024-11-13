@@ -25,6 +25,8 @@ type Cfg_db struct {
 	EDNS0_enabled bool `yaml:"edns0_enabled" env-default:"false"`
 	// ENDS0 buffer size
 	EDNS0_buffer_size int `yaml:"edns0_buffer_size" env-default:"4096"`
+	// Log all dns resource records
+	Log_dnsrecs bool `yaml:"log_dnsrecs" env-default:"false"`
 	// list of ips or subnets in CIDR notation to exclude from the scan
 	Excl_ips_fname string `yaml:"exclude_ips_fname"`
 	// maximum pps to *send*
