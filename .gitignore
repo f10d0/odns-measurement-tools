@@ -14,3 +14,4 @@ ratelimit_results/
 *.tar.gz
 *.txt.gz
 *.pcapng
+dns_tools

@@ -121,13 +121,15 @@ func (sender *Udp_sender) Build_dns(dst_ip net.IP, src_port layers.UDPPort, dnsi
 	}
 
 	dns := layers.DNS{
-		Questions:   []layers.DNSQuestion{qst},
-		RD:          true,
-		QDCount:     1,
-		OpCode:      layers.DNSOpCodeQuery,
-		ID:          dnsid,
-		Additionals: []layers.DNSResourceRecord{optRecord},
-		ARCount:     1,
+		Questions: []layers.DNSQuestion{qst},
+		RD:        true,
+		QDCount:   1,
+		OpCode:    layers.DNSOpCodeQuery,
+		ID:        dnsid,
+	}
+	if config.Cfg.EDNS0_enabled || config.Cfg.Dnssec_enabled {
+		dns.Additionals = []layers.DNSResourceRecord{optRecord}
+		dns.ARCount = 1
 	}
 
 	dns_buf := gopacket.NewSerializeBuffer()

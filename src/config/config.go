@@ -21,6 +21,10 @@ type Cfg_db struct {
 	Dns_query_type string `yaml:"dns_query_type" env-default:"A"`
 	// enable dnssec (only udp)
 	Dnssec_enabled bool `yaml:"dnssec_enabled" env-default:"false"`
+	// enable edns0 (only UDP)
+	EDNS0_enabled bool `yaml:"edns0_enabled" env-default:"false"`
+	// ENDS0 buffer size
+	EDNS0_buffer_size int `yaml:"edns0_buffer_size" env-default:"4096"`
 	// list of ips or subnets in CIDR notation to exclude from the scan
 	Excl_ips_fname string `yaml:"exclude_ips_fname"`
 	// maximum pps to *send*
