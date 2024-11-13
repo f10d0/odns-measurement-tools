@@ -14,8 +14,7 @@ import (
 )
 
 const (
-	DNSTypeDNSKEY uint16 = 48
-	DNSTypeANY    uint16 = 255
+	DNSTypeANY uint16 = 255
 )
 
 type Udp_sender struct {
@@ -42,7 +41,7 @@ func (sender *Udp_sender) Sender_init() {
 	case "AAAA":
 		sender.DNS_type = uint16(layers.DNSTypeAAAA)
 	case "DNSKEY":
-		sender.DNS_type = DNSTypeDNSKEY
+		sender.DNS_type = uint16(layers.DNSTypeDNSKEY)
 	case "ANY":
 		sender.DNS_type = DNSTypeANY
 	default:

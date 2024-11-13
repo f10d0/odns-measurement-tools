@@ -129,6 +129,7 @@ func scan_item_to_strarr(scan_item *Udp_scan_data_item) []string {
 	if config.Cfg.Log_dnsrecs {
 		for i, rr := range scan_item.Dns_recs {
 			logging.Println(6, "DNS-Response", "rec:"+rr.String())
+
 			dns_recs_str += fmt.Sprintf("%s-%s", rr.Type, base64.StdEncoding.EncodeToString(rr.Data))
 			if i != len(scan_item.Dns_recs)-1 {
 				dns_recs_str += ","
