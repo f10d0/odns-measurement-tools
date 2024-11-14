@@ -108,6 +108,8 @@ func main() {
 		config.Cfg.Verbosity = *debug_level
 	}
 
+	fmt.Println("config:", config.Cfg)
+
 	if *profile {
 		// go tool pprof -http=:8080 cpu.prof
 		start_profiling()

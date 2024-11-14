@@ -129,7 +129,9 @@ func scan_item_to_strarr(scan_item *Udp_scan_data_item) []string {
 	if config.Cfg.Log_dnsrecs {
 		for i, rr := range scan_item.Dns_recs {
 			logging.Println(6, "DNS-Response", "rec:"+rr.String())
-
+			if rr.Data == nil {
+				continue
+			}
 			dns_recs_str += fmt.Sprintf("%s-%s", rr.Type, base64.StdEncoding.EncodeToString(rr.Data))
 			if i != len(scan_item.Dns_recs)-1 {
 				dns_recs_str += ","
@@ -189,8 +191,8 @@ func (udps *Udp_scanner) Handle_pkt(ip *layers.IPv4, pkt gopacket.Packet) {
 		// check if item in map and assign value
 		udps.Scan_data.Mu.Lock()
 		scan_item, ok := udps.Scan_data.Items[udp_scan_item_key{udp.DstPort, dns.ID}]
-		udps.Scan_data.Mu.Unlock()
 		if !ok {
+			udps.Scan_data.Mu.Unlock()
 			return
 		}
 		logging.Println(5, "Handle-Pkt", "found related scan item")
@@ -200,11 +202,11 @@ func (udps *Udp_scanner) Handle_pkt(ip *layers.IPv4, pkt gopacket.Packet) {
 		}
 		udp_scan_item.Answerip = ip.SrcIP
 		if len(dns.Answers) != 0 {
-			// TODO fix the segfault here
 			udp_scan_item.Dns_recs = append(udp_scan_item.Dns_recs, dns.Answers...)
 		}
 		udp_scan_item.Dns_flags = (uint16)(udp.LayerPayload()[2])<<8 | (uint16)(udp.LayerPayload()[3])
 		udp_scan_item.Dns_payload_size = len(udp.LayerPayload())
+		udps.Scan_data.Mu.Unlock()
 		// queue for writeout
 		udps.Write_chan <- &scan_item
 	} else {

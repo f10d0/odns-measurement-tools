@@ -1,8 +1,6 @@
 package config
 
 import (
-	"fmt"
-
 	"github.com/ilyakaznacheev/cleanenv"
 )
 
@@ -98,5 +96,4 @@ func Load_config(config_path string) {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println("config:", Cfg)
 }
