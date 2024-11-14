@@ -152,7 +152,7 @@ func (udps *Udp_scanner) send_dns(id uint32, dst_ip net.IP, src_port layers.UDPP
 		Ts:       time.Now(),
 		Ip:       dst_ip,
 		Port:     src_port,
-		Dns_recs: nil,
+		Dns_recs: []layers.DNSResourceRecord{},
 		Dnsid:    dnsid,
 	}
 	logging.Println(6, "Send", "scan_data=", s_d_item)
