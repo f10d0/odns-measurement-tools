@@ -95,10 +95,6 @@ func (udps *Udp_scanner) Write_item(scan_item *scanner.Scan_data_item) {
 		return
 	}
 	udps.Writer.Write(scan_item_to_strarr(udp_scan_item))
-	// remove entry from map
-	udps.Scan_data.Mu.Lock()
-	delete(udps.Scan_data.Items, udp_scan_item_key{udp_scan_item.Port, udp_scan_item.Dnsid})
-	udps.Scan_data.Mu.Unlock()
 }
 
 func scan_item_to_strarr(scan_item *Udp_scan_data_item) []string {
@@ -194,10 +190,12 @@ func (udps *Udp_scanner) Handle_pkt(pkt gopacket.Packet) {
 		// check if item in map and assign value
 		udps.Scan_data.Mu.Lock()
 		scan_item, ok := udps.Scan_data.Items[udp_scan_item_key{udp.DstPort, dns.ID}]
-		udps.Scan_data.Mu.Unlock()
 		if !ok {
+			udps.Scan_data.Mu.Unlock()
 			return
 		}
+		delete(udps.Scan_data.Items, udp_scan_item_key{udp.DstPort, dns.ID})
+		udps.Scan_data.Mu.Unlock()
 		logging.Println(5, "Handle-Pkt", "found related scan item")
 		udp_scan_item, ok := scan_item.(*Udp_scan_data_item)
 		if !ok {
