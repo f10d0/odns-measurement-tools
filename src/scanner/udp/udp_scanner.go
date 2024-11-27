@@ -192,7 +192,6 @@ func (udps *Udp_scanner) Handle_pkt(ip *layers.IPv4, pkt gopacket.Packet) {
 			return
 		}
 		delete(udps.Scan_data.Items, udp_scan_item_key{udp.DstPort, dns.ID})
-		udps.Scan_data.Mu.Unlock()
 		logging.Println(5, "Handle-Pkt", "found related scan item")
 		udp_scan_item, ok := scan_item.(*Udp_scan_data_item)
 		if !ok {
