@@ -41,7 +41,7 @@ func Int2ip4(nn uint32) net.IP {
 	return ip
 }
 
-func Get_ether_handle(prot string) *pcapgo.EthernetHandle {
+func Get_ether_handle() *pcapgo.EthernetHandle {
 	handle, err := pcapgo.NewEthernetHandle(config.Cfg.Iface_name)
 	if err != nil {
 		panic(err)
@@ -51,7 +51,7 @@ func Get_ether_handle(prot string) *pcapgo.EthernetHandle {
 	if err != nil {
 		panic(err)
 	}
-	filter_string := fmt.Sprint("udp and ip dst ", config.Cfg.Iface_ip, " and src port ", config.Cfg.Dst_port)
+	filter_string := fmt.Sprint("ip dst ", config.Cfg.Iface_ip) //, " and src port ", config.Cfg.Dst_port , " and ", prot)
 	logging.Println(5, "Handle", "filter string:", filter_string)
 	bpf_instr, err := pcap.CompileBPFFilter(layers.LinkTypeEthernet, iface.MTU, filter_string)
 	if err != nil {

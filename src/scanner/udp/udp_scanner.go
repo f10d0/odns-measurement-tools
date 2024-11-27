@@ -122,9 +122,12 @@ func scan_item_to_strarr(scan_item *Udp_scan_data_item) []string {
 	// dns packet size
 	record = append(record, strconv.Itoa(scan_item.Dns_payload_size))
 	dns_recs_str := ""
-	if config.Cfg.Dns_query_type == "ANY" || config.Cfg.Dns_query_type == "DNSKEY" {
+	if config.Cfg.Log_dnsrecs {
 		for i, rr := range scan_item.Dns_recs {
 			logging.Println(6, "DNS-Response", "rec:"+rr.String())
+			if rr.Data == nil {
+				continue
+			}
 			dns_recs_str += fmt.Sprintf("%s-%s", rr.Type, base64.StdEncoding.EncodeToString(rr.Data))
 			if i != len(scan_item.Dns_recs)-1 {
 				dns_recs_str += ","
@@ -147,7 +150,7 @@ func (udps *Udp_scanner) send_dns(id uint32, dst_ip net.IP, src_port layers.UDPP
 		Ts:       time.Now(),
 		Ip:       dst_ip,
 		Port:     src_port,
-		Dns_recs: nil,
+		Dns_recs: []layers.DNSResourceRecord{},
 		Dnsid:    dnsid,
 	}
 	logging.Println(6, "Send", "scan_data=", s_d_item)
@@ -157,22 +160,16 @@ func (udps *Udp_scanner) send_dns(id uint32, dst_ip net.IP, src_port layers.UDPP
 	udps.Send_udp_pkt(udps.Build_dns(dst_ip, src_port, dnsid, config.Cfg.Dns_query))
 }
 
-func (udps *Udp_scanner) Handle_pkt(pkt gopacket.Packet) {
-	ip_layer := pkt.Layer(layers.LayerTypeIPv4)
-	if ip_layer == nil {
-		return
-	}
-	ip, ok := ip_layer.(*layers.IPv4)
-	if !ok {
-		return
-	}
-
+func (udps *Udp_scanner) Handle_pkt(ip *layers.IPv4, pkt gopacket.Packet) {
 	udp_layer := pkt.Layer(layers.LayerTypeUDP)
 	if udp_layer == nil {
 		return
 	}
 	udp, ok := udp_layer.(*layers.UDP)
 	if !ok { // skip wrong packets
+		return
+	}
+	if udp.SrcPort != layers.UDPPort(config.Cfg.Dst_port) { //skip wrong source port
 		return
 	}
 	// pkts w/o content will be dropped
@@ -202,11 +199,16 @@ func (udps *Udp_scanner) Handle_pkt(pkt gopacket.Packet) {
 			log.Fatal("cast failed, wrong type")
 		}
 		udp_scan_item.Answerip = ip.SrcIP
-		udp_scan_item.Dns_recs = append(udp_scan_item.Dns_recs, dns.Answers...)
+		if len(dns.Answers) != 0 {
+			udp_scan_item.Dns_recs = append(udp_scan_item.Dns_recs, dns.Answers...)
+		}
 		udp_scan_item.Dns_flags = (uint16)(udp.LayerPayload()[2])<<8 | (uint16)(udp.LayerPayload()[3])
 		udp_scan_item.Dns_payload_size = len(udp.LayerPayload())
+		udps.Scan_data.Mu.Unlock()
 		// queue for writeout
 		udps.Write_chan <- &scan_item
+	} else {
+		logging.Println(6, "Handle-Pkt", "missing application data")
 	}
 }
 
@@ -320,7 +322,7 @@ func (udps *Udp_scanner) Start_scan(args []string, outpath string) {
 	// set the DNS_PAYLOAD_SIZE once as it is static
 	_, _, dns_payload := udps.Build_dns(net.ParseIP("0.0.0.0"), 0, 0, config.Cfg.Dns_query)
 	udps.DNS_PAYLOAD_SIZE = uint16(len(dns_payload))
-	handle := common.Get_ether_handle("udp")
+	handle := common.Get_ether_handle()
 	// start packet capture as goroutine
 	udps.Wg.Add(5)
 	go udps.Packet_capture(handle)
@@ -364,7 +366,7 @@ func (udps *Udp_scanner) Start_internal(nets []net.IP, hostsize int) []scanner.S
 	// set the DNS_PAYLOAD_SIZE once as it is static
 	_, _, dns_payload := udps.Build_dns(net.ParseIP("0.0.0.0"), 0, 0, config.Cfg.Dns_query)
 	udps.DNS_PAYLOAD_SIZE = uint16(len(dns_payload))
-	handle := common.Get_ether_handle("udp")
+	handle := common.Get_ether_handle()
 	// start packet capture as goroutine
 	udps.Wg.Add(6)
 	go udps.Packet_capture(handle)

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
 )
 
 type Scan_data_item interface {
@@ -32,7 +33,7 @@ type root_scan_data struct {
 
 type IScanner_Methods interface {
 	Write_item(scan_item *Scan_data_item)
-	Handle_pkt(pkt gopacket.Packet)
+	Handle_pkt(ip *layers.IPv4, pkt gopacket.Packet)
 }
 
 type Base_scanner struct {

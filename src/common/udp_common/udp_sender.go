@@ -6,14 +6,15 @@ import (
 	"dns_tools/logging"
 	"net"
 
+	"math/rand"
+
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"golang.org/x/net/ipv4"
 )
 
 const (
-	DNSTypeDNSKEY uint16 = 48
-	DNSTypeANY    uint16 = 255
+	DNSTypeANY uint16 = 255
 )
 
 type Udp_sender struct {
@@ -40,7 +41,7 @@ func (sender *Udp_sender) Sender_init() {
 	case "AAAA":
 		sender.DNS_type = uint16(layers.DNSTypeAAAA)
 	case "DNSKEY":
-		sender.DNS_type = DNSTypeDNSKEY
+		sender.DNS_type = uint16(layers.DNSTypeDNSKEY)
 	case "ANY":
 		sender.DNS_type = DNSTypeANY
 	default:
@@ -94,7 +95,7 @@ func (sender *Udp_sender) Build_dns(dst_ip net.IP, src_port layers.UDPPort, dnsi
 		SrcIP:    net.ParseIP(config.Cfg.Iface_ip),
 		DstIP:    dst_ip,
 		Protocol: layers.IPProtocolUDP,
-		Id:       1,
+		Id:       uint16(rand.Intn(65536)),
 	}
 
 	// Create udp layer
@@ -110,20 +111,24 @@ func (sender *Udp_sender) Build_dns(dst_ip net.IP, src_port layers.UDPPort, dnsi
 		Type:  layers.DNSType(sender.DNS_type),
 		Class: layers.DNSClassIN,
 	}
-	// TODO if DNSTypeDNSKEY also request DNSSEC RRSIG
 	optRecord := layers.DNSResourceRecord{
 		Type:  layers.DNSTypeOPT,
 		Class: 4096, // Typically used to indicate a UDP payload size (e.g., 4096 bytes)
 	}
+	if config.Cfg.Dnssec_enabled {
+		optRecord.TTL = 1 << 15
+	}
 
 	dns := layers.DNS{
-		Questions:   []layers.DNSQuestion{qst},
-		RD:          true,
-		QDCount:     1,
-		OpCode:      layers.DNSOpCodeQuery,
-		ID:          dnsid,
-		Additionals: []layers.DNSResourceRecord{optRecord},
-		ARCount:     1,
+		Questions: []layers.DNSQuestion{qst},
+		RD:        true,
+		QDCount:   1,
+		OpCode:    layers.DNSOpCodeQuery,
+		ID:        dnsid,
+	}
+	if config.Cfg.EDNS0_enabled || config.Cfg.Dnssec_enabled {
+		dns.Additionals = []layers.DNSResourceRecord{optRecord}
+		dns.ARCount = 1
 	}
 
 	dns_buf := gopacket.NewSerializeBuffer()

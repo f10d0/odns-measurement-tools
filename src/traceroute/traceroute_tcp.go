@@ -144,15 +144,7 @@ func (tcpt *Tcp_traceroute) send_ack_with_dns(dst_ip net.IP, src_port layers.TCP
 	tcpt.Send_tcp_pkt(tcpt.build_ack_with_dns(dst_ip, src_port, seq_num, ack_num, ttl))
 }
 
-func (tcpt *Tcp_traceroute) Handle_pkt(pkt gopacket.Packet) {
-	ip_layer := pkt.Layer(layers.LayerTypeIPv4)
-	if ip_layer == nil {
-		return
-	}
-	ip, ok := ip_layer.(*layers.IPv4)
-	if !ok {
-		return
-	}
+func (tcpt *Tcp_traceroute) Handle_pkt(ip *layers.IPv4, pkt gopacket.Packet) {
 	icmp_layer := pkt.Layer(layers.LayerTypeICMPv4)
 	icmp, _ := icmp_layer.(*layers.ICMPv4)
 	if icmp != nil && icmp.TypeCode == layers.ICMPv4TypeTimeExceeded {
@@ -718,7 +710,7 @@ func (tcpt *Tcp_traceroute) Start_traceroute(args []string) {
 	// set the DNS_PAYLOAD_SIZE once as it is static
 	_, _, dns_payload := tcpt.build_ack_with_dns(net.ParseIP("0.0.0.0"), 0, 0, 0, 0)
 	tcpt.DNS_PAYLOAD_SIZE = uint16(len(dns_payload))
-	handle := common.Get_ether_handle("tcp")
+	handle := common.Get_ether_handle()
 	// start packet capture as goroutine
 	tcpt.Wg.Add(4)
 	go tcpt.Packet_capture(handle)

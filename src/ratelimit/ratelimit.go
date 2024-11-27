@@ -546,16 +546,8 @@ func (tester *Rate_tester) send_packets(id int) {
 	}
 }
 
-func (tester *Rate_tester) Handle_pkt(pkt gopacket.Packet) {
+func (tester *Rate_tester) Handle_pkt(ip *layers.IPv4, pkt gopacket.Packet) {
 	rec_time := time.Now().UnixMicro()
-	ip_layer := pkt.Layer(layers.LayerTypeIPv4)
-	if ip_layer == nil {
-		return
-	}
-	_, ok := ip_layer.(*layers.IPv4)
-	if !ok {
-		return
-	}
 
 	udp_layer := pkt.Layer(layers.LayerTypeUDP)
 	if udp_layer == nil {
@@ -580,6 +572,18 @@ func (tester *Rate_tester) Handle_pkt(pkt gopacket.Packet) {
 		return
 	}
 	logging.Println(6, nil, "got DNS response")
+	if dns.ResponseCode == layers.DNSResponseCodeNotImp {
+		return
+	}
+	if len(dns.Answers) == 0 {
+		//ignore empty replies
+		return
+	}
+	for _, answer := range dns.Answers {
+		if answer.Type == layers.DNSTypeHINFO {
+			return
+		}
+	}
 	// check if item in map and assign value
 	tester.resolver_mu.Lock()
 	rate_entry, ok := tester.active_resolvers[Active_key{port: uint16(udp.DstPort)}]
@@ -699,7 +703,7 @@ func (tester *Rate_tester) Start_ratetest(args []string, outpath string) {
 	}
 
 	// packet capture will call Handle_pkt
-	handle := common.Get_ether_handle("udp")
+	handle := common.Get_ether_handle()
 	tester.Wg.Add(1)
 	go tester.Packet_capture(handle)
 
