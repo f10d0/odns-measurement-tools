@@ -4,6 +4,7 @@ dst_port: 53
 dns_query: <domain>
 dns_query_type: A
 dnssec_enabled: false
+log_dnsrecs: false
 ends0_enabled: false
 ends0_buffer_size: 4096
 exclude_ips_fname: exclude_ips.txt
