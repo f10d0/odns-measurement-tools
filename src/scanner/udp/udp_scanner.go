@@ -62,6 +62,7 @@ func (udps *Udp_scanner) update_sync_init() (uint32, uint16, uint16) {
 type Udp_scan_data_item struct {
 	Id               uint32
 	Ts               time.Time
+	Ts_resp			 time.Time
 	Ip               net.IP
 	Answerip         net.IP
 	Port             layers.UDPPort
@@ -98,7 +99,7 @@ func (udps *Udp_scanner) Write_item(scan_item *scanner.Scan_data_item) {
 }
 
 func scan_item_to_strarr(scan_item *Udp_scan_data_item) []string {
-	// csv format: id;target_ip;response_ip;arecords;timestamp;port;dnsid;dns_pkt_size,<<record-type>-<base64-data>,...>;dnsflags
+	// csv format: id;target_ip;response_ip;arecords;timestamp_request;timestamp_response;port;dnsid;dns_pkt_size,<<record-type>-<base64-data>,...>;dnsflags
 	// transform scan_item into string array for csv writer
 	var record []string
 	record = append(record, strconv.Itoa(int(scan_item.Id)))
@@ -117,6 +118,7 @@ func scan_item_to_strarr(scan_item *Udp_scan_data_item) []string {
 	}
 	record = append(record, dns_answers)
 	record = append(record, scan_item.Ts.UTC().Format("2006-01-02 15:04:05.000000"))
+	record = append(record, scan_item.Ts_resp.UTC().Format("2006-01-02 15:04:05.000000"))
 	record = append(record, scan_item.Port.String())
 	record = append(record, strconv.Itoa((int)(scan_item.Dnsid)))
 	// dns packet size
@@ -198,6 +200,7 @@ func (udps *Udp_scanner) Handle_pkt(ip *layers.IPv4, pkt gopacket.Packet) {
 			log.Fatal("cast failed, wrong type")
 		}
 		udp_scan_item.Answerip = ip.SrcIP
+		udp_scan_item.Ts_resp = time.Now()
 		if len(dns.Answers) != 0 {
 			udp_scan_item.Dns_recs = append(udp_scan_item.Dns_recs, dns.Answers...)
 		}
