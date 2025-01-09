@@ -70,6 +70,7 @@ type Udp_scan_data_item struct {
 	Dns_recs         []layers.DNSResourceRecord
 	Dns_payload_size int
 	Dns_flags        uint16
+	Ttl 			 int
 }
 
 func (u *Udp_scan_data_item) Get_timestamp() time.Time {
@@ -99,7 +100,7 @@ func (udps *Udp_scanner) Write_item(scan_item *scanner.Scan_data_item) {
 }
 
 func scan_item_to_strarr(scan_item *Udp_scan_data_item) []string {
-	// csv format: id;target_ip;response_ip;arecords;timestamp_request;timestamp_response;port;dnsid;dns_pkt_size,<<record-type>-<base64-data>,...>;dnsflags
+	// csv format: id;target_ip;response_ip;arecords;timestamp_request;timestamp_response;port;dnsid;dns_pkt_size,<<record-type>-<base64-data>,...>;dnsflags;dns-ttl
 	// transform scan_item into string array for csv writer
 	var record []string
 	record = append(record, strconv.Itoa(int(scan_item.Id)))
@@ -138,6 +139,7 @@ func scan_item_to_strarr(scan_item *Udp_scan_data_item) []string {
 	}
 	record = append(record, dns_recs_str)
 	record = append(record, strconv.Itoa((int)(scan_item.Dns_flags)))
+	record = append(record, strconv.Itoa((int)(scan_item.Ttl)))
 
 	return record
 }
@@ -203,6 +205,7 @@ func (udps *Udp_scanner) Handle_pkt(ip *layers.IPv4, pkt gopacket.Packet) {
 		udp_scan_item.Ts_resp = time.Now()
 		if len(dns.Answers) != 0 {
 			udp_scan_item.Dns_recs = append(udp_scan_item.Dns_recs, dns.Answers...)
+			udp_scan_item.Ttl = (int)(dns.Answers[0].TTL)
 		}
 		udp_scan_item.Dns_flags = (uint16)(udp.LayerPayload()[2])<<8 | (uint16)(udp.LayerPayload()[3])
 		udp_scan_item.Dns_payload_size = len(udp.LayerPayload())
