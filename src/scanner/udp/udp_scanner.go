@@ -62,7 +62,7 @@ func (udps *Udp_scanner) update_sync_init() (uint32, uint16, uint16) {
 type Udp_scan_data_item struct {
 	Id               uint32
 	Ts               time.Time
-	Ts_resp			 time.Time
+	Ts_resp          time.Time
 	Ip               net.IP
 	Answerip         net.IP
 	Port             layers.UDPPort
@@ -70,7 +70,7 @@ type Udp_scan_data_item struct {
 	Dns_recs         []layers.DNSResourceRecord
 	Dns_payload_size int
 	Dns_flags        uint16
-	Ttl 			 int
+	Ttl              int
 }
 
 func (u *Udp_scan_data_item) Get_timestamp() time.Time {
@@ -321,7 +321,7 @@ func (udps *Udp_scanner) Start_scan(args []string, outpath string) {
 	var fname string
 	var netip net.IP
 	var hostsize int
-	fname, netip, hostsize = udps.Get_cidr_filename(args[0])
+	fname, netip, hostsize = common.Get_cidr_filename(args[0])
 
 	udps.Bind_ports()
 	// set the DNS_PAYLOAD_SIZE once as it is static

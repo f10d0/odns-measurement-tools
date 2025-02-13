@@ -682,15 +682,34 @@ func (tester *Rate_tester) Start_ratetest(args []string, outpath string) {
 	tester.Bind_ports()
 
 	if len(args) < 1 {
-		logging.Println(1, nil, "missing intersect input file")
+		logging.Println(1, nil, "missing intersect input file or ip")
 		return
+	}
+	fname, netip, hostsize := common.Get_cidr_filename(args[0])
+	if hostsize != 0 {
+		logging.Println(1, nil, "cannot test entire net")
 	}
 
 	logging.Write_to_runlog("START " + time.Now().UTC().String())
 
-	if !tester.read_forwarders(args[0]) {
-		logging.Println(3, nil, "exiting with error")
-		return
+	if fname != "" {
+		if !tester.read_forwarders(fname) {
+			logging.Println(3, nil, "exiting with error")
+			return
+		}
+	} else {
+		key := Resolver_key{resolver_ip: netip.String()}
+		resolver_entry, ok := tester.resolver_data[key]
+		if !ok {
+			tester.resolver_data[key] = &Resolver_entry{
+				resolver_ip: netip,
+				tfwd_ips:    make([]net.IP, 0),
+				rate_pos:    0,
+				rate_data:   make([]rate_data_s, 1),
+			}
+			resolver_entry = tester.resolver_data[key]
+		}
+		resolver_entry.tfwd_ips = append(resolver_entry.tfwd_ips, netip)
 	}
 
 	if config.Cfg.Domain_mode == "list" {
@@ -718,7 +737,7 @@ func (tester *Rate_tester) Start_ratetest(args []string, outpath string) {
 	logging.Println(3, nil, "Sending completed")
 
 	// TODO fix, the output file is cut off
-	time.Sleep(20 * time.Second)
+	time.Sleep(1 * time.Second)
 	close(tester.Stop_chan)
 	handle.Close()
 

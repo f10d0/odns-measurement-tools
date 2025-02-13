@@ -120,25 +120,6 @@ func (bs *Base_scanner) Timeout() {
 	}
 }
 
-func (bs *Base_scanner) Get_cidr_filename(cidr_filename string) (fname string, netip net.IP, hostsize int) {
-	ip, ip_net, err := net.ParseCIDR(cidr_filename)
-	_, file_err := os.Stat(cidr_filename)
-	if err != nil && file_err == nil {
-		// using filename
-		fname = cidr_filename
-	} else if err == nil {
-		// using CIDR net
-		netip = ip
-		ones, _ := ip_net.Mask.Size()
-		hostsize = 32 - ones
-	} else {
-		logging.Write_to_runlog("END " + time.Now().UTC().String() + " wrongly formatted input arg")
-		logging.Println(1, "Input", "ERR check your input arg (filename or CIDR notation)")
-		os.Exit(int(common.WRONG_INPUT_ARGS))
-	}
-	return
-}
-
 func (bs *Base_scanner) Exclude_ips() {
 	if _, err := os.Stat(config.Cfg.Excl_ips_fname); errors.Is(err, os.ErrNotExist) {
 		logging.Println(2, "Exclude", "ip exclusion list [", config.Cfg.Excl_ips_fname, "] not found, skipping")

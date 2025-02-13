@@ -44,6 +44,8 @@ func (sender *Udp_sender) Sender_init() {
 		sender.DNS_type = uint16(layers.DNSTypeDNSKEY)
 	case "ANY":
 		sender.DNS_type = DNSTypeANY
+	case "TXT":
+		sender.DNS_type = uint16(layers.DNSTypeTXT)
 	default:
 		panic("wrong DNS query type")
 	}

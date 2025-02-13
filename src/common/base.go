@@ -151,8 +151,10 @@ func (st *Base) Process_pkt(pkt gopacket.Packet) {
 
 	// fragmentation
 	// more fragments or last fragment
+	// TODO timeout and remove
 	if ip.Flags&0x1 == 1 || ip.FragOffset != 0 {
-		logging.Println(6, "Process-Pkt", "fragmented pkt received")
+		logging.Println(6, "Process-Pkt", "fragmented pkt received, size:", len(pkt.Data()), ", appl layer size:", len(pkt.LinkLayer().LayerPayload()))
+
 		st.fragbuf.mu.Lock()
 		_, ok := st.fragbuf.fragmap[ip.Id]
 		if !ok {
@@ -172,6 +174,7 @@ func (st *Base) Process_pkt(pkt gopacket.Packet) {
 					last_seen = true
 				}
 				if int(ip_frag.FragOffset)<<3 == len(transp_pkt) {
+					logging.Println(7, "Adding Layer Payload at offset", len(transp_pkt), ", layer payload size:", len(fragpkt.ApplicationLayer().Payload()))
 					transp_pkt = append(transp_pkt, ip_frag.LayerPayload()...)
 					frag_seen = true
 					break
@@ -243,4 +246,30 @@ func (st *Base) Close_handle(handle *pcapgo.EthernetHandle) {
 	logging.Println(3, "Handle", "closing handle")
 	handle.Close()
 	logging.Println(3, "Handle", "handle closed")
+}
+
+func Get_cidr_filename(cidr_filename string) (fname string, netip net.IP, hostsize int) {
+	ip := net.ParseIP(cidr_filename)
+	if ip != nil {
+		netip = ip
+		hostsize = 0
+		fname = ""
+		return
+	}
+	ip, ip_net, err := net.ParseCIDR(cidr_filename)
+	_, file_err := os.Stat(cidr_filename)
+	if err != nil && file_err == nil {
+		// using filename
+		fname = cidr_filename
+	} else if err == nil {
+		// using CIDR net
+		netip = ip
+		ones, _ := ip_net.Mask.Size()
+		hostsize = 32 - ones
+	} else {
+		logging.Write_to_runlog("END " + time.Now().UTC().String() + " wrongly formatted input arg")
+		logging.Println(1, "Input", "ERR check your input arg (filename or CIDR notation)")
+		os.Exit(int(WRONG_INPUT_ARGS))
+	}
+	return
 }

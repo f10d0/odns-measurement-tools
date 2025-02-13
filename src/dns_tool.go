@@ -54,6 +54,7 @@ func main() {
 		ethernet_alias  = flag.Bool("e", false, "alias for -ethernet")
 		qname           = flag.String("qname", "", "overwrites config dns query name to use")
 		qname_alias     = flag.String("q", "", "alias for -qname")
+		port            = flag.Int("port", -1, "overwrites the port set in config file")
 	)
 
 	flag.Parse()
@@ -106,6 +107,10 @@ func main() {
 	if *debug_level > -1 {
 		fmt.Println("verbosity level set to", *debug_level)
 		config.Cfg.Verbosity = *debug_level
+	}
+
+	if *port != -1 {
+		config.Cfg.Dst_port = uint16(*port)
 	}
 
 	fmt.Println("config:", config.Cfg)

@@ -483,7 +483,7 @@ func (tcps *Tcp_scanner) Start_scan(args []string, outpath string) {
 	var fname string
 	var netip net.IP
 	var hostsize int
-	fname, netip, hostsize = tcps.Get_cidr_filename(args[0])
+	fname, netip, hostsize = common.Get_cidr_filename(args[0])
 
 	// set the DNS_PAYLOAD_SIZE once as it is static
 	_, _, dns_payload := tcps.Build_ack_with_dns(net.ParseIP("0.0.0.0"), 0, 0, 0)
