@@ -3,8 +3,8 @@ github.com/BurntSushi/toml v1.4.0 h1:kuoIxZQy2WRRk1pttg9asf+WVv6tWQuBNVmK8+nqPr0
 github.com/BurntSushi/toml v1.4.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
 github.com/breml/bpfutils v0.0.0-20170519214641-cfcd7145376f h1:Gmu/tMSAxDXXytXLIVnNVty+KSOWqXJR7Nf02d7KTAg=
 github.com/breml/bpfutils v0.0.0-20170519214641-cfcd7145376f/go.mod h1:TsB4S49n5hgDPHPZqT301YN8oXO1vHKZS3iX1aoV0AA=
-github.com/f10d0/gopacket v1.0.1 h1:1hhU35U2qgQgU6kSJNsSEvlm+3XSzAul2RJs8N2/9hI=
-github.com/f10d0/gopacket v1.0.1/go.mod h1:/q4xBz8N8+/IrsrsytIrrweqjCvCTyOoGXVwa/VTmMQ=
+github.com/f10d0/gopacket v1.0.2 h1:tLyTFzLOUkhBHbIhLVgfUQvI4ky8JwNjZ/PxeYp3DE8=
+github.com/f10d0/gopacket v1.0.2/go.mod h1:/q4xBz8N8+/IrsrsytIrrweqjCvCTyOoGXVwa/VTmMQ=
 github.com/ilyakaznacheev/cleanenv v1.5.0 h1:0VNZXggJE2OYdXE87bfSSwGxeiGt9moSR2lOrsHHvr4=
 github.com/ilyakaznacheev/cleanenv v1.5.0/go.mod h1:a5aDzaJrLCQZsazHol1w8InnDcOX0OColm64SlIi6gk=
 github.com/joho/godotenv v1.5.1 h1:7eLL/+HRGLY0ldzfGMeQkb7vMd0as4CfYvUVzLqw0N0=
