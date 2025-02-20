@@ -427,11 +427,7 @@ func (tcps *Tcp_scanner) init_tcp() {
 			id := tcps.get_next_id()
 			logging.Println(6, nil, "ip:", dst_ip, id)
 			if config.Cfg.Pkts_per_sec > 0 {
-				r := tcps.Send_limiter.Reserve()
-				if !r.OK() {
-					logging.Println(4, nil, "Rate limit exceeded")
-				}
-				time.Sleep(r.Delay())
+				_ = tcps.Send_limiter.Take()
 			}
 			tcps.send_syn(id, dst_ip)
 		case <-tcps.Stop_chan:

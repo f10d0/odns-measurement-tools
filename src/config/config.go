@@ -87,6 +87,8 @@ type Cfg_db struct {
 	Rate_response_ip_only bool `yaml:"rate_response_ip_only" env-default:"false"`
 	// will summon a routine for each ip of the tfwd_pool to test concurrently at the same rate
 	Rate_concurrent_pool bool `yaml:"rate_concurrent_pool" env-default:"false"`
+	// number of subroutines to use for rate testing == different ports
+	Rate_subroutines int `yaml:"rate_subroutines" env-default:"5"`
 }
 
 var Cfg Cfg_db

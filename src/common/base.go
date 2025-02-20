@@ -17,7 +17,7 @@ import (
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcapgo"
-	"golang.org/x/time/rate"
+	ratelimiter "go.uber.org/ratelimit"
 )
 
 type stop struct{}
@@ -82,7 +82,7 @@ type Base struct {
 	DNS_PAYLOAD_SIZE uint16
 	Ip_chan          chan net.IP
 	Waiting_to_end   bool
-	Send_limiter     *rate.Limiter
+	Send_limiter     ratelimiter.Limiter
 	L2               RawL2
 	Writer           *csv.Writer
 	fragbuf          fragment_buffer_s
@@ -92,7 +92,7 @@ func (st *Base) Base_init() {
 	st.Stop_chan = make(chan stop) // (〃・ω・〃)
 	st.Ip_chan = make(chan net.IP, 1024)
 	st.Waiting_to_end = false
-	st.Send_limiter = rate.NewLimiter(rate.Every(time.Duration(1000000/config.Cfg.Pkts_per_sec)*time.Microsecond), 1)
+	st.Send_limiter = ratelimiter.New(config.Cfg.Pkts_per_sec)
 	st.fragbuf.fragmap = make(map[uint16][]gopacket.Packet)
 
 	logging.Println(6, "Init", "iface name:", config.Cfg.Iface_name)

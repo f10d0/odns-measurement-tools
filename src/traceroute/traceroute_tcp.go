@@ -294,11 +294,7 @@ func (tcpt *Tcp_traceroute) Handle_pkt(ip *layers.IPv4, pkt gopacket.Packet) {
 					logging.Println(3, tcpt.id_from_port(uint16(start_port)), "[*] Initializing DNS Traceroute to", ip.SrcIP, "over", params.initial_ip, "on port", tcp.DstPort)
 
 					for i := 1; i < 30; i++ {
-						r := tcpt.Send_limiter.Reserve()
-						if !r.OK() {
-							logging.Println(1, tcpt.id_from_port(uint16(start_port)), "[Sending PA with DNS] Rate limit exceeded")
-						}
-						time.Sleep(r.Delay())
+						_ = tcpt.Send_limiter.Take()
 						if params.dns_reply_received != -1 {
 							break
 						}
@@ -501,11 +497,7 @@ func (tcpt *Tcp_traceroute) init_traceroute(start_port uint16) {
 			params.traceroute_mutex.Unlock()
 			logging.Println(3, tcpt.id_from_port(start_port), "[*] TCP Traceroute to ", netip)
 			for i := 1; i <= 30; i++ {
-				r := tcpt.Send_limiter.Reserve()
-				if !r.OK() {
-					logging.Println(1, tcpt.id_from_port(start_port), "[Initial SYN] Rate limit exceeded")
-				}
-				time.Sleep(r.Delay())
+				_ = tcpt.Send_limiter.Take()
 				if params.syn_ack_received != -1 {
 					break
 				}

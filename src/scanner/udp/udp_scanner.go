@@ -20,7 +20,7 @@ import (
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
-	"golang.org/x/time/rate"
+	ratelimiter "go.uber.org/ratelimit"
 )
 
 type Udp_scanner struct {
@@ -237,11 +237,7 @@ func (udps *Udp_scanner) init_udp() {
 			id, src_port, dns_id := udps.update_sync_init()
 			logging.Println(5, "Send", "ip:", dst_ip, "id=", id, "port=", src_port, "dns_id=", dns_id)
 			if config.Cfg.Pkts_per_sec > 0 {
-				r := udps.Send_limiter.Reserve()
-				if !r.OK() {
-					log.Println("Rate limit exceeded")
-				}
-				time.Sleep(r.Delay())
+				_ = udps.Send_limiter.Take()
 			}
 			udps.send_dns(id, dst_ip, layers.UDPPort(src_port), dns_id)
 		case <-udps.Stop_chan:
@@ -365,7 +361,7 @@ func (udps *Udp_scanner) Start_internal(nets []net.IP, hostsize int) []scanner.S
 		port:  config.Cfg.Port_min,
 		dnsid: 0,
 	}
-	udps.Send_limiter = rate.NewLimiter(rate.Every(time.Duration(1000000/config.Cfg.Pkts_per_sec)*time.Microsecond), 1)
+	udps.Send_limiter = ratelimiter.New(config.Cfg.Pkts_per_sec)
 
 	//udps.Bind_ports()
 	// set the DNS_PAYLOAD_SIZE once as it is static

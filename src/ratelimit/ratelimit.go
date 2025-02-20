@@ -15,6 +15,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"math"
 	"math/rand"
 	"net"
 	"os"
@@ -26,7 +27,7 @@ import (
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
-	"golang.org/x/time/rate"
+	ratelimiter "go.uber.org/ratelimit"
 )
 
 type csv_pos_struct struct {
@@ -46,12 +47,20 @@ type Answer_entry struct {
 	dns_payload_size int
 }
 
+type rate_curve_pair_s struct {
+	target_tx_rate float64
+	duration       int
+	tx_rate        float64
+	rx_rate        float64
+	spread         float64
+}
+
 type rate_data_s struct {
-	answer_data     []Answer_entry // us, answer timestamps, log timestamp of every incoming packet
-	answer_mu       sync.Mutex
-	moving_avg_rate float64
-	max_rate        float64
-	rate_limiter    *rate.Limiter // current rate limiter
+	answer_data         []Answer_entry // us, answer timestamps, log timestamp of every incoming packet
+	answer_mu           sync.Mutex
+	rate_limiter        ratelimiter.Limiter // current rate limiter
+	rate_curve_pair     []rate_curve_pair_s
+	moving_sent_packets int
 }
 
 type Resolver_entry struct {
@@ -61,8 +70,8 @@ type Resolver_entry struct {
 	rate_pos      int // the current pos in the rate slice aka the current send rate
 	outport       uint16
 	rate_data     []rate_data_s
-	acc_max_rate  int
-	acc_avg_rate  int
+	acc_max_rate  rate_curve_pair_s
+	acc_rate_data []rate_curve_pair_s
 }
 
 type Resolver_key struct {
@@ -88,18 +97,25 @@ type Rate_tester struct {
 	domains            []string
 }
 
-func (entry *rate_data_s) calc_last_second_rate() {
+func (entry *rate_data_s) calc_last_second_rate(target_rate float64, duration int) {
 	now := time.Now().UnixMicro()
 	// calculate avg receive rate
 	ans_len := len(entry.answer_data) - 1
 	i := ans_len
 	for ; i >= 0; i-- {
-		if entry.answer_data[i].ts < now-int64(config.Cfg.Rate_increase_interval)*1000 {
+		if entry.answer_data[i].ts < now-int64(duration)*1000 {
 			break
 		}
 	}
-	entry.moving_avg_rate = float64(ans_len-i) / float64(config.Cfg.Rate_increase_interval) * 1000
-	entry.max_rate = common.Max(entry.max_rate, entry.moving_avg_rate)
+	moving_avg_tx_rate := float64(ans_len-i) / float64(duration) * 1000
+	entry.rate_curve_pair = append(entry.rate_curve_pair, rate_curve_pair_s{
+		target_tx_rate: target_rate,
+		duration:       duration,
+		rx_rate:        moving_avg_tx_rate,
+		tx_rate:        float64(entry.moving_sent_packets) / float64(duration) * 1000,
+		spread:         float64(entry.moving_sent_packets-ans_len+i) / float64(duration) * 1000,
+	})
+	entry.moving_sent_packets = 0
 }
 
 func (tester *Rate_tester) write_results(out_path string) {
@@ -121,39 +137,39 @@ func (tester *Rate_tester) write_results(out_path string) {
 			logging.Println(5, nil, "writing entry for resolver", entry.resolver_ip)
 			var record []string
 			// === csv format ===
-			// line 1: resolver_ip, max_rate, avg_rate
+			// line 1: resolver_ip, tx_rate, rx_rate
 			record = append(record, entry.resolver_ip.String())
-			record = append(record, strconv.Itoa(int(entry.acc_max_rate)))
-			record = append(record, strconv.Itoa(int(entry.acc_avg_rate)))
+			record = append(record, strconv.Itoa(int(entry.acc_max_rate.tx_rate)))
+			record = append(record, strconv.Itoa(int(entry.acc_max_rate.rx_rate)))
 			csv_writer.Write(record)
 
-			if config.Cfg.Rate_concurrent_pool {
-				for idx, data := range entry.rate_data {
-					record = make([]string, 0)
-					record = append(record, "rate-data")
-					record = append(record, entry.tfwd_ips[idx].String())
-					record = append(record, strconv.Itoa((int)(data.max_rate)))
-					csv_writer.Write(record)
+			for idx, data := range entry.rate_data {
+				if !config.Cfg.Rate_concurrent_pool {
+					idx = 0
 				}
-				for idx, data := range entry.rate_data {
-					for _, ans_entry := range data.answer_data {
-						record = make([]string, 0)
-						record = append(record, "dns-response")
-						record = append(record, entry.tfwd_ips[idx].String())
-						record = append(record, strconv.FormatInt(ans_entry.ts, 10))
-						record = append(record, strconv.Itoa(ans_entry.dns_payload_size))
-						csv_writer.Write(record)
+				record = make([]string, 0)
+				record = append(record, "rate-data")
+				record = append(record, entry.tfwd_ips[idx].String())
+				max_rate := data.rate_curve_pair[0]
+				for _, some_rate := range data.rate_curve_pair {
+					if some_rate.rx_rate > max_rate.rx_rate {
+						max_rate = some_rate
 					}
 				}
-			} else {
-				// line 2: ts 1?
-				// line 3: ts 2
-				// ...
-				// line n: ts n
-				for _, ans_entry := range entry.rate_data[0].answer_data {
-					record = make([]string, 2)
-					record[0] = strconv.FormatInt(ans_entry.ts, 10)
-					record[1] = strconv.Itoa(ans_entry.dns_payload_size)
+				record = append(record, strconv.Itoa((int)(math.Round(max_rate.tx_rate))))
+				record = append(record, strconv.Itoa((int)(math.Round(max_rate.rx_rate))))
+				csv_writer.Write(record)
+			}
+			for idx, data := range entry.rate_data {
+				if !config.Cfg.Rate_concurrent_pool {
+					idx = 0
+				}
+				for _, ans_entry := range data.answer_data {
+					record = make([]string, 0)
+					record = append(record, "dns-response")
+					record = append(record, entry.tfwd_ips[idx].String())
+					record = append(record, strconv.FormatInt(ans_entry.ts, 10))
+					record = append(record, strconv.Itoa(ans_entry.dns_payload_size))
 					csv_writer.Write(record)
 				}
 			}
@@ -377,6 +393,7 @@ func (tester *Rate_tester) rate_test_target_sub(id int, entry *Resolver_entry, s
 	defer wg.Done()
 	t_start := time.Now().UnixMicro()
 	// send for increase_interval ms
+	port := (int(entry.outport)-int(config.Cfg.Port_min)+subid)%int(config.Cfg.Port_max-config.Cfg.Port_min) + int(config.Cfg.Port_min)
 	for time.Now().UnixMicro()-t_start < int64(config.Cfg.Rate_increase_interval)*1000 {
 		var query_domain string
 		if config.Cfg.Domain_mode == "hash" {
@@ -396,7 +413,6 @@ func (tester *Rate_tester) rate_test_target_sub(id int, entry *Resolver_entry, s
 		}
 		//TODO check if ip on blocklist
 		// entry.tfwd_ips[entry.tfwd_pool_pos]
-		port := (int(entry.outport)-int(config.Cfg.Port_min)+subid)%int(config.Cfg.Port_max-config.Cfg.Port_min) + int(config.Cfg.Port_min)
 		if config.Cfg.Rate_concurrent_pool {
 			logging.Println(6, "Sender "+strconv.Itoa(id)+"-"+strconv.Itoa(subid), "sending dns to", entry.tfwd_ips[subid].String(), ",resolver", entry.resolver_ip.String())
 			tester.Send_udp_pkt(tester.Build_dns(entry.tfwd_ips[subid], layers.UDPPort(port), *dnsid, query_domain))
@@ -405,23 +421,24 @@ func (tester *Rate_tester) rate_test_target_sub(id int, entry *Resolver_entry, s
 			tester.Send_udp_pkt(tester.Build_dns(entry.tfwd_ips[entry.tfwd_pool_pos], layers.UDPPort(port), *dnsid, query_domain))
 			entry.tfwd_pool_pos = (entry.tfwd_pool_pos + 1) % len(entry.tfwd_ips)
 		}
+		entry.rate_data[subid].moving_sent_packets += 1
 		(*dnsid)++
-		r := entry.rate_data[subid].rate_limiter.Reserve()
-		if !r.OK() {
-			log.Println("Rate limit exceeded")
-		}
-		time.Sleep(r.Delay())
+		_ = entry.rate_data[subid].rate_limiter.Take()
 	}
-	entry.rate_data[subid].calc_last_second_rate()
-	logging.Println(5, "Sender "+strconv.Itoa(id)+"-"+strconv.Itoa(subid), "last calculated rate is", entry.rate_data[subid].moving_avg_rate)
+	entry.rate_data[subid].calc_last_second_rate(float64(tester.rate_curve[entry.rate_pos]), config.Cfg.Rate_increase_interval)
+	logging.Println(6, "Sender "+strconv.Itoa(id)+"-"+strconv.Itoa(subid), "last calculated rate is", entry.rate_data[subid].rate_curve_pair[len(entry.rate_data[subid].rate_curve_pair)-1].rx_rate)
 	// set rate limiter to next value
 	if entry.rate_pos == len(tester.rate_curve)-1 {
-		logging.Println(5, "Sender "+strconv.Itoa(id)+"-"+strconv.Itoa(subid), "rate curve exhausted")
+		logging.Println(6, "Sender "+strconv.Itoa(id)+"-"+strconv.Itoa(subid), "rate curve exhausted")
 		ret_chan <- subid
 		return
 	}
 	// TODO remove threshold and instead just check if increasing the tx rate gives a certain increase in rx rate
-	if entry.rate_data[subid].moving_avg_rate < config.Cfg.Rate_receive_threshold*float64(tester.rate_curve[entry.rate_pos]) {
+	rate_divisor := 1
+	if !config.Cfg.Rate_concurrent_pool {
+		rate_divisor = int(config.Cfg.Rate_subroutines)
+	}
+	if entry.rate_data[subid].rate_curve_pair[len(entry.rate_data[subid].rate_curve_pair)-1].rx_rate < config.Cfg.Rate_receive_threshold*float64(tester.rate_curve[entry.rate_pos]/rate_divisor) {
 		logging.Println(5, "Sender "+strconv.Itoa(id)+"-"+strconv.Itoa(subid), "receiving rate too small, quitting")
 		ret_chan <- subid
 		return
@@ -436,7 +453,7 @@ func (tester *Rate_tester) rate_test_target(id int, entry *Resolver_entry) {
 	if config.Cfg.Rate_concurrent_pool {
 		length_n = len(entry.tfwd_ips)
 	} else {
-		length_n = 1
+		length_n = int(config.Cfg.Rate_subroutines)
 	}
 	dnsids := make([]uint16, length_n)
 	subid_pool := make([]int, 0)
@@ -464,25 +481,62 @@ func (tester *Rate_tester) rate_test_target(id int, entry *Resolver_entry) {
 				break
 			}
 		}
+
+		// calculate rate data
+		// TODO method
+		var curve_pair rate_curve_pair_s
+		curve_pair.target_tx_rate = -1
+		curve_pair.duration = -1
+		curve_pair.rx_rate = 0
+		curve_pair.tx_rate = 0
+		curve_pair.spread = 0
+		for _, rate_data := range entry.rate_data {
+			if len(rate_data.rate_curve_pair) <= entry.rate_pos {
+				continue
+			}
+			sub_curve_pair := rate_data.rate_curve_pair[entry.rate_pos]
+			if curve_pair.target_tx_rate == float64(-1) {
+				curve_pair.target_tx_rate = sub_curve_pair.target_tx_rate
+				curve_pair.duration = sub_curve_pair.duration
+			}
+			curve_pair.rx_rate += sub_curve_pair.rx_rate
+			curve_pair.tx_rate += sub_curve_pair.tx_rate
+			curve_pair.spread += sub_curve_pair.spread
+		}
+		if entry.acc_max_rate.rx_rate < curve_pair.rx_rate {
+			entry.acc_max_rate = curve_pair
+		}
+		entry.acc_rate_data = append(entry.acc_rate_data, curve_pair)
+		logging.Println(5, "Sender "+strconv.Itoa(id), "current rx-rate:", math.Round(curve_pair.rx_rate), "Pkts/s")
+
 		if len(subid_pool) == length_n {
 			break
 		}
 		entry.rate_pos++
 		logging.Println(5, "Sender "+strconv.Itoa(id), "rate up", tester.rate_curve[entry.rate_pos], "Pkts/s")
+		rlimiter := ratelimiter.New(tester.rate_curve[entry.rate_pos])
 		for i := 0; i < len(entry.rate_data); i++ {
-			entry.rate_data[i].rate_limiter.SetLimit(rate.Every(time.Duration(1000000/tester.rate_curve[entry.rate_pos]) * time.Microsecond))
+			if config.Cfg.Rate_concurrent_pool {
+				entry.rate_data[i].rate_limiter = ratelimiter.New(tester.rate_curve[entry.rate_pos])
+			} else {
+				entry.rate_data[i].rate_limiter = rlimiter
+			}
 		}
 	}
-	// calc final rate
-	entry.acc_max_rate = 0
-	entry.acc_avg_rate = 0
-	for i := 0; i < len(entry.rate_data); i++ {
-		entry.acc_max_rate += int(entry.rate_data[i].max_rate)
-		entry.acc_avg_rate += int(entry.rate_data[i].moving_avg_rate)
+	// calculate tx/rx rates
+	for _, curve_pair := range entry.acc_rate_data {
+		logging.Println(4, "Sender "+strconv.Itoa(id),
+			"\n    === Resolver", entry.resolver_ip, "[accumulated]",
+			"\n    target-tx-rate:", math.Round(curve_pair.target_tx_rate),
+			"Pkts/s\n    tx-rate:", math.Round(curve_pair.tx_rate),
+			"Pkts/s\n    rx-rate:", math.Round(curve_pair.rx_rate),
+			"Pkts/s\n    spread (tx-rx):", math.Round(curve_pair.spread), "Pkts/s")
 	}
-	entry.acc_avg_rate /= len(entry.rate_data)
-	logging.Println(4, "Sender "+strconv.Itoa(id), "final avg rate for ", entry.resolver_ip, "is", entry.acc_avg_rate, "Pkts/s")
-	logging.Println(4, "Sender "+strconv.Itoa(id), "max rate for ", entry.resolver_ip, "is", entry.acc_max_rate, "Pkts/s")
+	logging.Println(4, "Sender "+strconv.Itoa(id),
+		"\n    === Resolver", entry.resolver_ip, "[overall]",
+		"Pkts/s\n    tx-rate @max-rx-rate:", math.Round(float64(entry.acc_max_rate.tx_rate)),
+		"Pkts/s\n    max-rx-rate:", math.Round(entry.acc_max_rate.rx_rate),
+		"Pkts/s\n    accumulated spread (tx-rx) @max-rx-rate:", math.Round(entry.acc_max_rate.spread), "Pkts/s")
 	// TODO test stability at max rate, add config variable
 }
 
@@ -516,14 +570,18 @@ func (tester *Rate_tester) send_packets(id int) {
 		if config.Cfg.Rate_concurrent_pool {
 			entry.rate_data = make([]rate_data_s, len(entry.tfwd_ips))
 			for i := 0; i < len(entry.tfwd_ips); i++ {
-				entry.rate_data[i].rate_limiter = rate.NewLimiter(rate.Every(time.Duration(1000000/tester.rate_curve[0])*time.Microsecond), 1)
+				entry.rate_data[i].rate_limiter = ratelimiter.New(tester.rate_curve[0])
 				act_key := Active_key{port: uint16(int(outport) + i)}
 				tester.active_resolvers[act_key] = entry
 			}
 		} else {
-			entry.rate_data[0].rate_limiter = rate.NewLimiter(rate.Every(time.Duration(1000000/tester.rate_curve[0])*time.Microsecond), 1)
-			act_key := Active_key{port: uint16(outport)}
-			tester.active_resolvers[act_key] = entry
+			entry.rate_data = make([]rate_data_s, int(config.Cfg.Rate_subroutines))
+			rlimiter := ratelimiter.New(tester.rate_curve[0])
+			for i := 0; i < int(config.Cfg.Rate_subroutines); i++ {
+				entry.rate_data[i].rate_limiter = rlimiter
+				act_key := Active_key{port: uint16(int(outport) + i)}
+				tester.active_resolvers[act_key] = entry
+			}
 		}
 		tester.resolver_counter++
 		tester.resolver_mu.Unlock()
@@ -616,7 +674,7 @@ func (tester *Rate_tester) inject_cache() {
 		go func(id int) {
 			defer tester.sender_wg.Done()
 			var dnsid uint16 = 0
-			var rate_limiter *rate.Limiter = rate.NewLimiter(rate.Every(time.Duration(1000000/config.Cfg.Rate_inject_speed)*time.Microsecond), 1)
+			var rate_limiter ratelimiter.Limiter = ratelimiter.New(tester.rate_curve[0])
 			outport := tester.current_port
 			for { // iterate resolvers
 				tester.resolver_mu.Lock()
@@ -643,11 +701,7 @@ func (tester *Rate_tester) inject_cache() {
 						logging.Println(6, "Cache-Injector "+strconv.Itoa(id), "sending dns to", tfwd, ",resolver", entry.resolver_ip.String())
 						tester.Send_udp_pkt(tester.Build_dns(tfwd, layers.UDPPort(outport), dnsid, query_domain))
 						dnsid++
-						r := rate_limiter.Reserve()
-						if !r.OK() {
-							log.Println("Rate limit exceeded")
-						}
-						time.Sleep(r.Delay())
+						_ = rate_limiter.Take()
 					}
 				}
 			}

@@ -5,6 +5,7 @@ import (
 	"dns_tools/logging"
 	"encoding/binary"
 	"fmt"
+	"math"
 	"net"
 	"strings"
 
@@ -69,4 +70,28 @@ func Max(a float64, b float64) float64 {
 		return a
 	}
 	return b
+}
+
+func Std_dev(data []float64) float64 {
+	n := float64(len(data))
+	if n == 0 {
+		return 0
+	}
+
+	// mean
+	var sum float64
+	for _, value := range data {
+		sum += value
+	}
+	mean := sum / n
+
+	// variance
+	var var_sum float64
+	for _, value := range data {
+		var_sum += (value - mean) * (value - mean)
+	}
+	variance := var_sum / n
+
+	// standard deviation
+	return math.Sqrt(variance)
 }
