@@ -95,6 +95,7 @@ type Rate_tester struct {
 	current_port       uint32
 	resolver_counter   int
 	domains            []string
+	singleip           bool
 }
 
 func (entry *rate_data_s) calc_last_second_rate(target_rate float64, duration int) {
@@ -120,13 +121,25 @@ func (entry *rate_data_s) calc_last_second_rate(target_rate float64, duration in
 
 func (tester *Rate_tester) write_results(out_path string) {
 	formatted_ts := time.Now().UTC().Format("2006-01-02_15-04-05")
-	out_path = path.Join(out_path, fmt.Sprintf("%s_rm-%s_dm-%s_incr-%sms_max-rate-%spps", formatted_ts, config.Cfg.Rate_mode, config.Cfg.Domain_mode, strconv.Itoa(config.Cfg.Rate_increase_interval), strconv.Itoa(tester.rate_curve[len(tester.rate_curve)-1])))
+	out_path = path.Join(out_path, fmt.Sprintf("%s_rm-%s_dm-%s_incr-%sms_max-rate-%spps-port%s",
+		formatted_ts,
+		config.Cfg.Rate_mode,
+		config.Cfg.Domain_mode,
+		strconv.Itoa(config.Cfg.Rate_increase_interval),
+		strconv.Itoa(tester.rate_curve[len(tester.rate_curve)-1]),
+		strconv.Itoa((int)(config.Cfg.Dst_port))),
+	)
 	// TODO output config as txt file in folder
 	os.MkdirAll(out_path, os.ModePerm)
 	for {
 		select {
 		case entry := <-tester.finished_resolvers:
-			csvfile, err := os.Create(path.Join(out_path, entry.resolver_ip.String()+".csv.gz"))
+			logging.Println(5, nil, "writing entry for resolver", entry.resolver_ip)
+			var record []string
+			// write timestamps
+			// format: fwd-ip, ts, dns-payload-size
+			os.MkdirAll(path.Join(out_path, "timestamps"), os.ModePerm)
+			csvfile, err := os.Create(path.Join(out_path, "timestamps", entry.resolver_ip.String()+".csv.gz"))
 			if err != nil {
 				panic(err)
 			}
@@ -134,49 +147,43 @@ func (tester *Rate_tester) write_results(out_path string) {
 			csv_writer := csv.NewWriter(zip_writer)
 			csv_writer.Comma = ';'
 
-			logging.Println(5, nil, "writing entry for resolver", entry.resolver_ip)
-			var record []string
-			// === csv format ===
-			// line 1: resolver_ip, tx_rate, rx_rate
-			record = append(record, entry.resolver_ip.String())
-			record = append(record, strconv.Itoa(int(entry.acc_max_rate.tx_rate)))
-			record = append(record, strconv.Itoa(int(entry.acc_max_rate.rx_rate)))
-			csv_writer.Write(record)
-
-			for idx, data := range entry.rate_data {
-				if !config.Cfg.Rate_concurrent_pool {
-					idx = 0
-				}
-				record = make([]string, 0)
-				record = append(record, "rate-data")
-				record = append(record, entry.tfwd_ips[idx].String())
-				max_rate := data.rate_curve_pair[0]
-				for _, some_rate := range data.rate_curve_pair {
-					if some_rate.rx_rate > max_rate.rx_rate {
-						max_rate = some_rate
-					}
-				}
-				record = append(record, strconv.Itoa((int)(math.Round(max_rate.tx_rate))))
-				record = append(record, strconv.Itoa((int)(math.Round(max_rate.rx_rate))))
-				csv_writer.Write(record)
-			}
 			for idx, data := range entry.rate_data {
 				if !config.Cfg.Rate_concurrent_pool {
 					idx = 0
 				}
 				for _, ans_entry := range data.answer_data {
 					record = make([]string, 0)
-					record = append(record, "dns-response")
 					record = append(record, entry.tfwd_ips[idx].String())
 					record = append(record, strconv.FormatInt(ans_entry.ts, 10))
 					record = append(record, strconv.Itoa(ans_entry.dns_payload_size))
 					csv_writer.Write(record)
 				}
 			}
-
 			csv_writer.Flush()
 			zip_writer.Close()
 			csvfile.Close()
+
+			// write rate data
+			// format: target-tx-rate, tx-rate, rx-rate, spread
+			csvfile, err = os.Create(path.Join(out_path, "ratelimit_record_"+entry.resolver_ip.String()+".csv"))
+			if err != nil {
+				panic(err)
+			}
+			csv_writer = csv.NewWriter(csvfile)
+			csv_writer.Comma = ';'
+
+			for _, data_pair := range entry.acc_rate_data {
+				record = make([]string, 0)
+				record = append(record, strconv.Itoa((int)(math.Round(data_pair.target_tx_rate))))
+				record = append(record, strconv.Itoa((int)(math.Round(data_pair.tx_rate))))
+				record = append(record, strconv.Itoa((int)(math.Round(data_pair.rx_rate))))
+				record = append(record, strconv.Itoa((int)(math.Round(data_pair.spread))))
+				csv_writer.Write(record)
+			}
+			csv_writer.Flush()
+			csvfile.Close()
+
+			//TODO output subroutine raw data
 		case <-tester.Stop_chan:
 			return
 		}
@@ -530,13 +537,13 @@ func (tester *Rate_tester) rate_test_target(id int, entry *Resolver_entry) {
 			"\n    target-tx-rate:", math.Round(curve_pair.target_tx_rate),
 			"Pkts/s\n    tx-rate:", math.Round(curve_pair.tx_rate),
 			"Pkts/s\n    rx-rate:", math.Round(curve_pair.rx_rate),
-			"Pkts/s\n    spread (tx-rx):", math.Round(curve_pair.spread), "Pkts/s")
+			"Pkts/s\n    spread (tx-rx):", math.Round(curve_pair.spread), "Pkts/s", "rel:", math.Round(curve_pair.spread/curve_pair.tx_rate*100), "%")
 	}
 	logging.Println(4, "Sender "+strconv.Itoa(id),
 		"\n    === Resolver", entry.resolver_ip, "[overall]",
-		"Pkts/s\n    tx-rate @max-rx-rate:", math.Round(float64(entry.acc_max_rate.tx_rate)),
+		"Pkts/s\n    tx-rate @max-rx-rate:", math.Round(entry.acc_max_rate.tx_rate),
 		"Pkts/s\n    max-rx-rate:", math.Round(entry.acc_max_rate.rx_rate),
-		"Pkts/s\n    accumulated spread (tx-rx) @max-rx-rate:", math.Round(entry.acc_max_rate.spread), "Pkts/s")
+		"Pkts/s\n    spread (tx-rx) @max-rx-rate:", math.Round(entry.acc_max_rate.spread), "Pkts/s", "rel:", math.Round(entry.acc_max_rate.spread/entry.acc_max_rate.tx_rate*100), "%")
 	// TODO test stability at max rate, add config variable
 }
 
@@ -751,6 +758,7 @@ func (tester *Rate_tester) Start_ratetest(args []string, outpath string) {
 			logging.Println(3, nil, "exiting with error")
 			return
 		}
+		tester.singleip = false
 	} else {
 		key := Resolver_key{resolver_ip: netip.String()}
 		resolver_entry, ok := tester.resolver_data[key]
@@ -764,6 +772,7 @@ func (tester *Rate_tester) Start_ratetest(args []string, outpath string) {
 			resolver_entry = tester.resolver_data[key]
 		}
 		resolver_entry.tfwd_ips = append(resolver_entry.tfwd_ips, netip)
+		tester.singleip = true
 	}
 
 	if config.Cfg.Domain_mode == "list" {
