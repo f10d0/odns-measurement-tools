@@ -67,6 +67,8 @@ type Cfg_db struct {
 	Rate_mode string `yaml:"rate_mode" env-default:"direct"`
 	// in ms, how long to test each send rate of the rate curve for
 	Rate_increase_interval int `yaml:"rate_increase_interval" env-default:"2000"`
+	// use the below defined receive threshold to prematurely end the test
+	Rate_ignore_threshold bool `yaml:"rate_ignore_threshold" env-default:"false"`
 	// receive threshold: between 0 and 1, defines what percentage of the outgoing packet rate must be received again to
 	//                    to be counted as successfully serving the target packet rate
 	//                    e.g.: current send rate is 1000pps, threshold value is 0.75
@@ -87,7 +89,7 @@ type Cfg_db struct {
 	Rate_response_ip_only bool `yaml:"rate_response_ip_only" env-default:"false"`
 	// will summon a routine for each ip of the tfwd_pool to test concurrently at the same rate
 	Rate_concurrent_pool bool `yaml:"rate_concurrent_pool" env-default:"false"`
-	// number of subroutines to use for rate testing == different ports
+	// number of subroutines to use for rate testing (== different source ports per forwarder/resolver)
 	Rate_subroutines int `yaml:"rate_subroutines" env-default:"5"`
 }
 

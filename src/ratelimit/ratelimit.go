@@ -91,6 +91,7 @@ type Rate_tester struct {
 	active_resolvers   map[Active_key]*Resolver_entry
 	finished_resolvers chan *Resolver_entry
 	sender_wg          sync.WaitGroup
+	open_writer        sync.Mutex
 	rate_curve         []int
 	current_port       uint32
 	resolver_counter   int
@@ -108,11 +109,10 @@ func (entry *rate_data_s) calc_last_second_rate(target_rate float64, duration in
 			break
 		}
 	}
-	moving_avg_tx_rate := float64(ans_len-i) / float64(duration) * 1000
 	entry.rate_curve_pair = append(entry.rate_curve_pair, rate_curve_pair_s{
 		target_tx_rate: target_rate,
 		duration:       duration,
-		rx_rate:        moving_avg_tx_rate,
+		rx_rate:        float64(ans_len-i) / float64(duration) * 1000,
 		tx_rate:        float64(entry.moving_sent_packets) / float64(duration) * 1000,
 		spread:         float64(entry.moving_sent_packets-ans_len+i) / float64(duration) * 1000,
 	})
@@ -134,6 +134,7 @@ func (tester *Rate_tester) write_results(out_path string) {
 	for {
 		select {
 		case entry := <-tester.finished_resolvers:
+			tester.open_writer.Lock()
 			logging.Println(5, nil, "writing entry for resolver", entry.resolver_ip)
 			var record []string
 			// write timestamps
@@ -184,6 +185,7 @@ func (tester *Rate_tester) write_results(out_path string) {
 			csvfile.Close()
 
 			//TODO output subroutine raw data
+			tester.open_writer.Unlock()
 		case <-tester.Stop_chan:
 			return
 		}
@@ -396,7 +398,7 @@ func (tester *Rate_tester) read_forwarders(fname string) bool {
 	return true
 }
 
-func (tester *Rate_tester) rate_test_target_sub(id int, entry *Resolver_entry, subid int, wg *sync.WaitGroup, dnsid *uint16, ret_chan chan int) { //TODO maybe make this dnsid random
+func (tester *Rate_tester) rate_test_target_sub(id int, entry *Resolver_entry, subid int, wg *sync.WaitGroup, dnsid *uint16, ret_chan chan int, finished_subs int) { //TODO maybe make this dnsid random
 	defer wg.Done()
 	t_start := time.Now().UnixMicro()
 	// send for increase_interval ms
@@ -441,12 +443,18 @@ func (tester *Rate_tester) rate_test_target_sub(id int, entry *Resolver_entry, s
 		return
 	}
 	// TODO remove threshold and instead just check if increasing the tx rate gives a certain increase in rx rate
+	if config.Cfg.Rate_ignore_threshold {
+		ret_chan <- -1
+		return
+	}
 	rate_divisor := 1
 	if !config.Cfg.Rate_concurrent_pool {
-		rate_divisor = int(config.Cfg.Rate_subroutines)
+		rate_divisor = int(config.Cfg.Rate_subroutines) - finished_subs
 	}
-	if entry.rate_data[subid].rate_curve_pair[len(entry.rate_data[subid].rate_curve_pair)-1].rx_rate < config.Cfg.Rate_receive_threshold*float64(tester.rate_curve[entry.rate_pos]/rate_divisor) {
-		logging.Println(5, "Sender "+strconv.Itoa(id)+"-"+strconv.Itoa(subid), "receiving rate too small, quitting")
+	rate_is := entry.rate_data[subid].rate_curve_pair[len(entry.rate_data[subid].rate_curve_pair)-1].rx_rate
+	rate_should := config.Cfg.Rate_receive_threshold * float64(tester.rate_curve[entry.rate_pos]/rate_divisor)
+	if rate_is < rate_should {
+		logging.Println(5, fmt.Sprintf("Sender %d-%d", id, subid), fmt.Sprintf("receiving rate too small (is:%.1fpps, should:%.1fpps), quitting", rate_is, rate_should))
 		ret_chan <- subid
 		return
 	}
@@ -470,12 +478,12 @@ func (tester *Rate_tester) rate_test_target(id int, entry *Resolver_entry) {
 				continue
 			}
 			wg.Add(1)
-			go tester.rate_test_target_sub(id, entry, i, &wg, &dnsids[i], ret_chan)
+			go tester.rate_test_target_sub(id, entry, i, &wg, &dnsids[i], ret_chan, len(subid_pool))
 		}
 		chan_count := 0
 		for {
 			subid := <-ret_chan
-			logging.Println(6, "Sender "+strconv.Itoa(id), "subid in channel", subid)
+			logging.Println(6, "Sender "+strconv.Itoa(id), "subid", subid, "returned")
 			if subid != -1 {
 				if !intarr_contains(subid_pool, subid) {
 					subid_pool = append(subid_pool, subid)
@@ -484,7 +492,7 @@ func (tester *Rate_tester) rate_test_target(id int, entry *Resolver_entry) {
 				chan_count += 1
 			}
 			if chan_count == length_n-len(subid_pool) {
-				logging.Println(6, "Sender "+strconv.Itoa(id), "all subroutines finished")
+				logging.Println(5, "Sender "+strconv.Itoa(id), "all subroutines finished")
 				break
 			}
 		}
@@ -514,13 +522,13 @@ func (tester *Rate_tester) rate_test_target(id int, entry *Resolver_entry) {
 			entry.acc_max_rate = curve_pair
 		}
 		entry.acc_rate_data = append(entry.acc_rate_data, curve_pair)
-		logging.Println(5, "Sender "+strconv.Itoa(id), "current rx-rate:", math.Round(curve_pair.rx_rate), "Pkts/s")
+		logging.Println(4, "Sender "+strconv.Itoa(id), "current rx-rate:", math.Round(curve_pair.rx_rate), "Pkts/s")
 
 		if len(subid_pool) == length_n {
 			break
 		}
 		entry.rate_pos++
-		logging.Println(5, "Sender "+strconv.Itoa(id), "rate up", tester.rate_curve[entry.rate_pos], "Pkts/s")
+		logging.Println(4, "Sender "+strconv.Itoa(id), "rate up", tester.rate_curve[entry.rate_pos], "Pkts/s")
 		rlimiter := ratelimiter.New(tester.rate_curve[entry.rate_pos])
 		for i := 0; i < len(entry.rate_data); i++ {
 			if config.Cfg.Rate_concurrent_pool {
@@ -532,14 +540,14 @@ func (tester *Rate_tester) rate_test_target(id int, entry *Resolver_entry) {
 	}
 	// calculate tx/rx rates
 	for _, curve_pair := range entry.acc_rate_data {
-		logging.Println(4, "Sender "+strconv.Itoa(id),
+		logging.Println(3, "Sender "+strconv.Itoa(id),
 			"\n    === Resolver", entry.resolver_ip, "[accumulated]",
 			"\n    target-tx-rate:", math.Round(curve_pair.target_tx_rate),
 			"Pkts/s\n    tx-rate:", math.Round(curve_pair.tx_rate),
 			"Pkts/s\n    rx-rate:", math.Round(curve_pair.rx_rate),
 			"Pkts/s\n    spread (tx-rx):", math.Round(curve_pair.spread), "Pkts/s", "rel:", math.Round(curve_pair.spread/curve_pair.tx_rate*100), "%")
 	}
-	logging.Println(4, "Sender "+strconv.Itoa(id),
+	logging.Println(3, "Sender "+strconv.Itoa(id),
 		"\n    === Resolver", entry.resolver_ip, "[overall]",
 		"Pkts/s\n    tx-rate @max-rx-rate:", math.Round(entry.acc_max_rate.tx_rate),
 		"Pkts/s\n    max-rx-rate:", math.Round(entry.acc_max_rate.rx_rate),
@@ -800,7 +808,7 @@ func (tester *Rate_tester) Start_ratetest(args []string, outpath string) {
 	logging.Println(3, nil, "Sending completed")
 
 	// TODO fix, the output file is cut off
-	time.Sleep(1 * time.Second)
+	tester.open_writer.Lock()
 	close(tester.Stop_chan)
 	handle.Close()
 

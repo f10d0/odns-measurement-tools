@@ -153,7 +153,7 @@ func (st *Base) Process_pkt(pkt gopacket.Packet) {
 	// more fragments or last fragment
 	// TODO timeout and remove
 	if ip.Flags&0x1 == 1 || ip.FragOffset != 0 {
-		logging.Println(6, "Process-Pkt", "fragmented pkt received, size:", len(pkt.Data()), ", appl layer size:", len(pkt.LinkLayer().LayerPayload()))
+		logging.Println(7, "Process-Pkt", "fragmented pkt received, size:", len(pkt.Data()), ", appl layer size:", len(pkt.LinkLayer().LayerPayload()))
 
 		st.fragbuf.mu.Lock()
 		_, ok := st.fragbuf.fragmap[ip.Id]
@@ -189,14 +189,14 @@ func (st *Base) Process_pkt(pkt gopacket.Packet) {
 		if !last_seen {
 			// bail if not all fragments yet
 			st.fragbuf.mu.Unlock()
-			logging.Println(6, "Process-Pkt", "not all fragments seen yet")
+			logging.Println(7, "Process-Pkt", "not all fragments seen yet")
 			return
 		}
 		// remove from map
 		delete(st.fragbuf.fragmap, ip.Id)
 		st.fragbuf.mu.Unlock()
 
-		logging.Println(6, "Process-Pkt", "all fragments seen")
+		logging.Println(7, "Process-Pkt", "all fragments seen")
 		switch ip.Protocol {
 		case layers.IPProtocolUDP:
 			pkt = gopacket.NewPacket(transp_pkt, layers.LayerTypeUDP, gopacket.Default)
