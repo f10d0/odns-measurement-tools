@@ -52,7 +52,7 @@ func main() {
 		debug_alias     = flag.Int("v", -1, "alias for -verbose")
 		ethernet_header = flag.Bool("ethernet", false, "dns_tool will manually craft the ethernet header")
 		ethernet_alias  = flag.Bool("e", false, "alias for -ethernet")
-		qname           = flag.String("qname", "", "overwrites config dns query name to use")
+		qname           = flag.String("qname", "", "overwrites config dns query name")
 		qname_alias     = flag.String("q", "", "alias for -qname")
 		port            = flag.Int("port", -1, "overwrites the port set in config file")
 	)

@@ -466,8 +466,7 @@ func (tcps *Tcp_scanner) Start_scan(args []string, outpath string) {
 	tcps.L2_sender = &tcps.L2
 	tcps.Scanner_methods = tcps
 	tcps.Base_methods = tcps
-	// before running the script run below iptables command so that kernel doesn't send out RSTs
-	// sudo iptables -C OUTPUT -p tcp --tcp-flags RST RST -j DROP > /dev/null 2>&1 || sudo iptables -A OUTPUT -p tcp --tcp-flags RST RST -j DROP
+	tcps.Set_iptable_rule()
 	// write start ts to log
 	logging.Write_to_runlog("START " + time.Now().UTC().String())
 	// command line args
@@ -503,7 +502,8 @@ func (tcps *Tcp_scanner) Start_scan(args []string, outpath string) {
 	}
 	go tcps.Close_handle(handle)
 	tcps.Wg.Wait()
-	logging.Println(3, nil, "all routines finished")
+	logging.Println(3, "Teardown", "all routines finished")
+	tcps.Remove_iptable_rule()
 	logging.Write_to_runlog("END " + time.Now().UTC().String())
 	logging.Println(3, nil, "program done")
 }

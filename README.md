@@ -6,7 +6,9 @@ It comprises all ODNS components:
 - Recursive forwarders
 - Transparent forwarders
 
-Regular scan results are published under http://odns.secnow.net
+Regular scan results are published under http://odns.secnow.net.
+
+The data of the last scan can be accessed via an API on https://odns-data.netd.cs.tu-dresden.de/. 
 
 # Usage
 ```
@@ -28,6 +30,10 @@ Regular scan results are published under http://odns.secnow.net
     	overwrites packet rate set in the config in pkt/s, -1 for unlimited (default -2)
   -v, --verbose [int]
     	overwrites the debug level set in the config (default -1, 1-6)
+  -q, --qname [string]
+      overwrites the dns query name
+  -port [int]
+      overwrites the port
 ```
 
 ## DNS over TCP
@@ -35,13 +41,7 @@ Regular scan results are published under http://odns.secnow.net
 **Setup:**
 Modify the config accordingly (set your interface name and IP-address).
 
-The template is located at ` src/scanner/tcp/config.yml.template`
-
-Ensure kernel reset packets are disabled before running the scan:
-
-```
-sudo iptables -A OUTPUT -p tcp --tcp-flags RST RST -j DROP
-```
+The config template is located at ` src/scanner/tcp/config.yml.template`
 
 **Run the scan:**
 ```
@@ -63,7 +63,7 @@ python3 src/postprocessing/postproc_data_tcp_pure.py <input_file> <output_file>
 **Setup:**
 Modify the config accordingly (set your interface name and IP-address).
 
-The template is located at ` src/scanner/udp/config.yml.template`
+The config template is located at ` src/scanner/udp/config.yml.template`
 
 The port range can also be specified in the config. By default the range lies outside the Linux ephemeral port range (random port range) used by normal applications.
 
@@ -84,12 +84,9 @@ python3 src/postprocessing/postproc_data_udp_pure.py <input_file> <output_file>
 ```
 
 
-The results are in the same format as the tcp results.
-
-
 ## DNS Traceroute Tools
 These tools measure the path to and beyond transparent DNS forwarders. 
-### DNS over TCP Traceroute
+### DNS over TCP - Traceroute
 Sends out SYN packets with increasing IP TTL values.
 As soon as a SYN/ACK arrives, the tool starts to send DNS requests over TCP with increasing IP TTL to explore the path between scanner over target to DNS resolver.
 
@@ -99,7 +96,7 @@ cd src
 sudo go run dns_tool.go --mode traceroute --protocol tcp [target-ip|path-to-list-of-ips]
 ```
 
-## DNS Ratelimit Testing
+## DNS Rate Limit Testing
 
 **Run the test**\
 This requires:

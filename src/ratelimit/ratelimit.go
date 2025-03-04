@@ -807,7 +807,6 @@ func (tester *Rate_tester) Start_ratetest(args []string, outpath string) {
 	tester.sender_wg.Wait()
 	logging.Println(3, nil, "Sending completed")
 
-	// TODO fix, the output file is cut off
 	tester.open_writer.Lock()
 	close(tester.Stop_chan)
 	handle.Close()

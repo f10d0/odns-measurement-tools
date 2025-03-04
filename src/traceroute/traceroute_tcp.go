@@ -668,8 +668,7 @@ func (tcpt *Tcp_traceroute) Write_results() {
 func (tcpt *Tcp_traceroute) Start_traceroute(args []string) {
 	tcpt.Traceroute_init()
 	tcpt.Base_methods = tcpt
-	// TODO run iptables command so that kernel doesnt send out RSTs
-	// sudo iptables -C OUTPUT -p tcp --tcp-flags RST RST -j DROP > /dev/null || sudo iptables -A OUTPUT -p tcp --tcp-flags RST RST -j DROP
+	tcpt.Set_iptable_rule()
 
 	cur_usr, _ := user.Current()
 	logging.Println(0, nil, "Current User UID:", cur_usr.Uid)
@@ -719,6 +718,7 @@ func (tcpt *Tcp_traceroute) Start_traceroute(args []string) {
 	}
 	go tcpt.Close_handle(handle)
 	tcpt.Wg.Wait()
-	logging.Println(3, "", "all routines finished")
+	logging.Println(3, "Teardown", "all routines finished")
+	tcpt.Remove_iptable_rule()
 	logging.Println(3, "", "program done")
 }
