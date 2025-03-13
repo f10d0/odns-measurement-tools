@@ -4,9 +4,20 @@ import re
 import sys
 import os
 from tqdm import tqdm
+import argparse
 
-# list of vendors:
-# cat parsed_results.csv | cut -d ";" -f 3 | sort | uniq -c | sort -n
+"""
+This script analyzes router vendors and models with regex patterns.
+The collection of below rules will be in no way complete nor match correctly in all cases.
+
+To get a quick overview of the vendors and models run:
+list of vendors:
+$ cat combined_results.csv | cut -d ";" -f 3 | sort | uniq -c | sort -n
+list of models:
+$ cat combined_results.csv | cut -d ";" -f 4 | sort | uniq -c | sort -n
+"""
+
+parser = argparse.ArgumentParser(description="Analyze output files with regex for vendor/firmware")
 
 # output csv format
 headers = [
@@ -84,9 +95,14 @@ vendor_patterns = {
     "Dahua": r"(?:^|\s|>)(dahua)(?:\s|$|<)",
     "Hikvision": r"(?:^|\s|>)(hikvision)(?:\s|$|<)",
     "Swann": r"(?:^|\s|>)(swann)(?:\s|$|<)",
+
+    # Printers
+    "HP": r"(?:^|\s|>)(hp)(?:\s|$|<)",
+    "Canon": r"(?:^|\s|>)(canon)(?:\s|$|<)",
+    "Brother": r"(?:^|\s|>)(brother)(?:\s|$|<)",
+    "Epson": r"(?:^|\s|>)(epson)(?:\s|$|<)",
 }
 
-# TODO incomplete
 operator_patterns = [
     r"(?:^|\s|>)(verizon)(?:\s|$|<)",
     r"(?:^|\s|>)(at\s*&\s*t)(?:\s|$|<)",  # "AT&T"
@@ -125,11 +141,13 @@ model_regexes = [
     # e.g., <li id="product_name">HG255s</li>
     r"<li[^>]*id=[\"']product_name[\"'][^>]*>([^<]+)</li>",
     r"src=[\"\'']/configHtml\.js\?v=[^\"\'<>]*?(\bWOM MiMo\b)[^\"\'<>]*?[\"\'']",
+    r"\b(?:Brother|Canon|HP|Epson) ([^/\s,]+(?: [^/\s,]+)*)\b",
 ]
 
 firmware_regexes = [
     # e.g., "Firmware Version 1.2.3" or "Firmware 1.2.3"
     r"(?<![/\-])firmware(?:\s*version)?\s*[:=]?\s*([\d\.]+[^\s<]*)",
+    r"Firmware (Ver\.[\d\.]+)",
     # e.g., "RouterOS 6.45.1"
     r"(routeros(?:\s*\d+\.\d+(\.\d+)?)?)",
     r"(v\d+\.\d+(\.\d+)?)",
@@ -161,6 +179,11 @@ def find_router_vendor(banner_text):
     return ",".join(matches)
 
 def find_model_version(banner_text):
+    if "PID:" in banner_text:
+        match = re.search(r"PID:\s*([^,\n]+)\b", banner_text, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+    
     matches = []
     for pattern in model_regexes:
         match = re.search(pattern, banner_text, re.IGNORECASE)
@@ -216,6 +239,34 @@ def analyze_str(ip_address, content, successful_protocols):
 
     return row
 
+def analyze_str_snmp(ip_address, content):
+    # grab device characteristics with regex
+    router_vendor = find_router_vendor(content)
+    if "RouterOS" in content:
+        split_model = content.split(" ", 1)
+        if len(split_model) == 2:
+            model_version = split_model[1]
+    else:
+        model_version = find_model_version(content)
+        if model_version == "":
+            model_version = content.replace(",", "")
+    firmware_version = find_firmware_version(content)
+    network_operator = find_network_operator(content)
+
+    if router_vendor == "" and "NVR" in model_version:
+        router_vendor = "UNV"
+
+    row = {
+        "ip": ip_address,
+        "network-operator": network_operator,
+        "router vendor": router_vendor,
+        "model version": model_version,
+        "firmware version": firmware_version,
+        "successful protocols": "snmp"
+    }
+
+    return row
+
 def parse_html_output(input_html_path, output_csv_path):
     with open(output_csv_path, "w", newline="", encoding="utf-8") as outfile:
         writer = csv.DictWriter(outfile, fieldnames=headers, delimiter=";")
@@ -227,6 +278,7 @@ def parse_html_output(input_html_path, output_csv_path):
                     file_content = file.read()
                     row = analyze_str(filename[:-5],file_content,"")
                     writer.writerow(row)
+    print(f"CSV output written to: {output_csv_path}")
 
 def parse_zgrab_output(input_json_path, output_csv_path):
     with open(input_json_path, "r", encoding="utf-8") as infile:
@@ -303,13 +355,45 @@ def parse_zgrab_output(input_json_path, output_csv_path):
 
     print(f"CSV output written to: {output_csv_path}")
 
+def parse_onesixtyone_output(inpath, outpath):
+    with open(inpath, "r", encoding="utf-8") as infile:
+        total_lines = sum(1 for _ in infile)
+
+    with open(inpath, "r", encoding="utf-8") as infile, \
+         open(outpath, "w", newline="", encoding="utf-8") as outfile:
+
+        writer = csv.DictWriter(outfile, fieldnames=headers, delimiter=";")
+        writer.writeheader()
+
+        ips = []
+
+        for line in tqdm(infile, total=total_lines):
+            match = re.search(r"^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}) \[[^\]]+\] (.+)$", line, re.IGNORECASE)
+            if match:
+                ip = match.group(1).strip()
+                if ip in ips: continue
+                ips.append(ip)
+                snmp_desc = match.group(2).strip()
+                row = analyze_str_snmp(ip, snmp_desc)
+                writer.writerow(row)
+    print(f"CSV output written to: {outpath}")
+
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("missing input filepath")
-        sys.exit(-1)
-    input_path = sys.argv[1]
-    if os.path.isdir(input_path):
-        parse_html_output(input_path, "parsed_results_html.csv")
-    else:
-        parse_zgrab_output(input_path, "parsed_results.csv")
+    parser.add_argument("-m", "--mode", type=str, help="zgrab, selenium, snmp")
+    parser.add_argument("-i", "--input", type=str, help="path to input file/folder")
+    parser.add_argument("-o", "--output", type=str, help="path to output file")
+    args, leftovers = parser.parse_known_args()
+    if args.mode is None :
+        print("mode missing --mode")
+        sys.exit(1)
+    if args.input is None:
+        print("input path missing --input")
+        sys.exit(1)
+
+    if args.mode == "selenium": 
+        parse_html_output(args.input, args.output if args.output is not None else "parsed_results_html.csv")
+    elif args.mode == "zgrab":
+        parse_zgrab_output(args.input, args.output if args.output is not None else "parsed_results.csv")
+    elif args.mode == "snmp":
+        parse_onesixtyone_output(args.input, args.output if args.output is not None else "parsed_results_snmp.csv")

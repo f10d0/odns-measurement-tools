@@ -39,7 +39,7 @@ port=22
  - ensure python venv is setup and all requirements downloaded, if not run: 
  - `python3 -m venv .venv && source .venv/bin/active && pip install -r requirements.txt`
  - run the regex script to obtain a list
- - `python analyze_vendors.py output_success.json`
+ - `python analyze_vendors.py --mode zgrab --input output_success.json`
  
  This is a first list (`parsed_results.csv`) of vendors and router models but probably not sufficient.
 
@@ -55,12 +55,18 @@ The output folder `output_selenium` will contain the site's html and screenshots
 
 ## Step 4: Analyze selenium output
  - extract device information based on the html source
- - `python analyze_vendors.py output_selenium/ok/html`
+ - `python analyze_vendors.py --mode selenium --input output_selenium/ok/html`
 
  This will also take some time. Output is written to `parsed_results_html.csv`
 
-## Step 5: Combine both results
- - `python combine_results.py parsed_results.csv parsed_results_html.csv`
+## Step 5: Scan snmp
+ - to improve the fingerprinting scan for snmp
+ - `gcc -o onesixtyone.bin onesixtyone/onesixtyone.c`
+ - `./onesixtyone.bin -i <list-of-ips> -o results_snmp.txt`
+ - `python analyze_vendors.py --mode snmp --input results_snmp.txt` 
+
+## Step 6: Combine the results
+ - `python combine_results.py parsed_results.csv parsed_results_html.csv parsed_results_snmp.csv`
 
  The resulting `combined_results.csv` now contains both data.
  To get a quick overview of the device vendors run `cat combined_results.csv | cut -d ";" -f 3 | sort | uniq -c | sort -n`
