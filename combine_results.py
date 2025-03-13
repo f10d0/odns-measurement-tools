@@ -2,14 +2,16 @@ import os
 import sys
 import csv
 from collections import defaultdict
+from common import hash_string
 
 headers = [
     "ip", 
     "network-operator", 
-    "router vendor", 
-    "model version", 
-    "firmware version", 
-    "successful protocols"
+    "router-vendor", 
+    "model-version", 
+    "firmware-version", 
+    "successful-protocols",
+    "banner-hash",
 ]
 
 if len(sys.argv) > 2:
@@ -33,7 +35,7 @@ if len(sys.argv) > 2:
     for file_arg in sys.argv[1:]:
         read_csv_to_dict(file_arg)
 
-    all_columns = ["ID"] + list(next(iter(data.values())).keys())
+    all_columns = [headers[0]] + list(next(iter(data.values())).keys())
 
     # write back
     with open("combined_results.csv", "w", newline="", encoding="utf-8") as f:
@@ -42,6 +44,19 @@ if len(sys.argv) > 2:
         
         for id_key in sorted(data.keys()):
             row = [id_key] # write key column
-            for column in all_columns[1:]:  # write remaining
-                row.append(",".join(sorted(data[id_key].get(column, set()))))  # merge all unique
+            for column in all_columns[1:]:  # write remainin
+                if "hash" in column:
+                    row.append(hash_string(",".join(sorted(data[id_key].get(column, set())))))
+                else:
+                    row.append(",".join(sorted(data[id_key].get(column, set()))))  # merge all unique
             writer.writerow(row)
+
+import polars as pl
+df = pl.read_csv("combined_results.csv", separator=";")
+df = df.with_columns(
+    df["ip"].str.extract(r"^(.*)\.[^.]+$", 1).alias("network-24")
+)
+df_grouped = df.filter(pl.col("router-vendor").is_not_null()).group_by(["network-24","router-vendor", "model-version", "successful-protocols", "banner-hash"]).agg(
+    pl.len().alias("no-of-ips")
+).sort(by="no-of-ips", descending=True)
+df_grouped.write_csv("fingerprinting_dealiased.csv", separator=";") 

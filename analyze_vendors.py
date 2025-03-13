@@ -5,6 +5,7 @@ import sys
 import os
 from tqdm import tqdm
 import argparse
+from common import hash_string
 
 """
 This script analyzes router vendors and models with regex patterns.
@@ -23,10 +24,11 @@ parser = argparse.ArgumentParser(description="Analyze output files with regex fo
 headers = [
     "ip", 
     "network-operator", 
-    "router vendor", 
-    "model version", 
-    "firmware version", 
-    "successful protocols"
+    "router-vendor", 
+    "model-version", 
+    "firmware-version", 
+    "successful-protocols",
+    "banner-hash"
 ]
 
 vendor_patterns = {
@@ -218,51 +220,53 @@ def find_network_operator(banner_text):
                 matches.append(operator)
     return ",".join(matches)
 
-def analyze_str(ip_address, content, successful_protocols):
+def analyze_str(ip_address, banner_content, successful_protocols):
     # grab device characteristics with regex
-    router_vendor = find_router_vendor(content)
-    model_version = find_model_version(content)
-    firmware_version = find_firmware_version(content)
-    network_operator = find_network_operator(content)
+    router_vendor = find_router_vendor(banner_content)
+    model_version = find_model_version(banner_content)
+    firmware_version = find_firmware_version(banner_content)
+    network_operator = find_network_operator(banner_content)
 
     if router_vendor == "" and "NVR" in model_version:
         router_vendor = "UNV"
 
     row = {
-        "ip": ip_address,
-        "network-operator": network_operator,
-        "router vendor": router_vendor,
-        "model version": model_version,
-        "firmware version": firmware_version,
-        "successful protocols": ",".join(successful_protocols)
+        headers[0]: ip_address,
+        headers[1]: network_operator,
+        headers[2]: router_vendor,
+        headers[3]: model_version,
+        headers[4]: firmware_version,
+        headers[5]: ",".join(successful_protocols),
+        headers[6]: hash_string(banner_content)
     }
 
     return row
 
-def analyze_str_snmp(ip_address, content):
+def analyze_str_snmp(ip_address, banner_content):
     # grab device characteristics with regex
-    router_vendor = find_router_vendor(content)
-    if "RouterOS" in content:
-        split_model = content.split(" ", 1)
+    router_vendor = find_router_vendor(banner_content)
+    if "RouterOS" in banner_content:
+        split_model = banner_content.split(" ", 1)
         if len(split_model) == 2:
             model_version = split_model[1]
     else:
-        model_version = find_model_version(content)
+        model_version = find_model_version(banner_content)
         if model_version == "":
-            model_version = content.replace(",", "")
-    firmware_version = find_firmware_version(content)
-    network_operator = find_network_operator(content)
+            model_version = banner_content.replace(",", "").replace(";", "")
+    firmware_version = find_firmware_version(banner_content)
+    network_operator = find_network_operator(banner_content)
 
     if router_vendor == "" and "NVR" in model_version:
         router_vendor = "UNV"
 
     row = {
-        "ip": ip_address,
-        "network-operator": network_operator,
-        "router vendor": router_vendor,
-        "model version": model_version,
-        "firmware version": firmware_version,
-        "successful protocols": "snmp"
+        headers[0]: ip_address,
+        headers[1]: network_operator,
+        headers[2]: router_vendor,
+        headers[3]: model_version,
+        headers[4]: firmware_version,
+        headers[5]: "snmp",
+        headers[6]: hash_string(banner_content)
     }
 
     return row
