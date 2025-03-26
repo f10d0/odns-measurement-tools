@@ -139,9 +139,6 @@ func (st *Base) Base_init() {
 	}
 }
 
-var count int = 0
-var count_mu sync.Mutex
-
 func (st *Base) Process_pkt(pkt gopacket.Packet) {
 	ip_layer := pkt.Layer(layers.LayerTypeIPv4)
 	if ip_layer == nil {
@@ -200,11 +197,6 @@ func (st *Base) Process_pkt(pkt gopacket.Packet) {
 		st.fragbuf.mu.Unlock()
 
 		logging.Println(6, "Process-Pkt", "all fragments seen")
-		count_mu.Lock()
-		count++
-		c := count
-		count_mu.Unlock()
-		logging.Println(6, nil, "COUNT:", c)
 		switch ip.Protocol {
 		case layers.IPProtocolUDP:
 			pkt = gopacket.NewPacket(transp_pkt, layers.LayerTypeUDP, gopacket.Default)
