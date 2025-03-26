@@ -25,8 +25,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
+	"github.com/gopacket/gopacket"
+	"github.com/gopacket/gopacket/layers"
 	ratelimiter "go.uber.org/ratelimit"
 )
 
@@ -99,23 +99,24 @@ type Rate_tester struct {
 	singleip           bool
 }
 
-func (entry *rate_data_s) calc_last_second_rate(target_rate float64, duration int) {
+func (entry *rate_data_s) calc_last_second_rate(target_rate float64, duration_send int, duration_timeout int) {
 	now := time.Now().UnixMicro()
 	// calculate avg receive rate
 	ans_len := len(entry.answer_data) - 1
 	i := ans_len
 	for ; i >= 0; i-- {
-		if entry.answer_data[i].ts < now-int64(duration)*1000 {
+		if entry.answer_data[i].ts < now-int64(duration_send+duration_timeout)*1000 {
 			break
 		}
 	}
 	entry.rate_curve_pair = append(entry.rate_curve_pair, rate_curve_pair_s{
 		target_tx_rate: target_rate,
-		duration:       duration,
-		rx_rate:        float64(ans_len-i) / float64(duration) * 1000,
-		tx_rate:        float64(entry.moving_sent_packets) / float64(duration) * 1000,
-		spread:         float64(entry.moving_sent_packets-ans_len+i) / float64(duration) * 1000,
+		duration:       duration_send,
+		rx_rate:        float64(ans_len-i) / float64(duration_send) * 1000,
+		tx_rate:        float64(entry.moving_sent_packets) / float64(duration_send) * 1000,
+		spread:         float64(entry.moving_sent_packets-ans_len+i) / float64(duration_send) * 1000,
 	})
+	logging.Println(6, "Calc-Last-Rate", "# of tx:", entry.moving_sent_packets, "# of rx:", ans_len-i)
 	entry.moving_sent_packets = 0
 }
 
@@ -434,7 +435,8 @@ func (tester *Rate_tester) rate_test_target_sub(id int, entry *Resolver_entry, s
 		(*dnsid)++
 		_ = entry.rate_data[subid].rate_limiter.Take()
 	}
-	entry.rate_data[subid].calc_last_second_rate(float64(tester.rate_curve[entry.rate_pos]), config.Cfg.Rate_increase_interval)
+	time.Sleep(time.Duration(config.Cfg.Rate_wait_interval) * time.Millisecond)
+	entry.rate_data[subid].calc_last_second_rate(float64(tester.rate_curve[entry.rate_pos]), config.Cfg.Rate_increase_interval, config.Cfg.Rate_wait_interval)
 	logging.Println(6, "Sender "+strconv.Itoa(id)+"-"+strconv.Itoa(subid), "last calculated rate is", entry.rate_data[subid].rate_curve_pair[len(entry.rate_data[subid].rate_curve_pair)-1].rx_rate)
 	// set rate limiter to next value
 	if entry.rate_pos == len(tester.rate_curve)-1 {
@@ -624,36 +626,37 @@ func (tester *Rate_tester) Handle_pkt(ip *layers.IPv4, pkt gopacket.Packet) {
 
 	udp_layer := pkt.Layer(layers.LayerTypeUDP)
 	if udp_layer == nil {
+		logging.Println(6, "Handle-Pkt", "wrong udp layer")
 		return
 	}
 	udp, ok := udp_layer.(*layers.UDP)
 	if !ok { // skip wrong packets
-		return
-	}
-	// pkts w/o content will be dropped
-	if pkt.ApplicationLayer() == nil {
+		logging.Println(6, "Handle-Pkt", "wrong udp")
 		return
 	}
 
-	logging.Println(6, nil, "received data")
+	logging.Println(6, "Handle-Pkt", "received data")
 	// decode as DNS Packet
 	dns := &layers.DNS{}
 	pld := udp.LayerPayload()
 	err := dns.DecodeFromBytes(pld, gopacket.NilDecodeFeedback)
 	if err != nil {
-		logging.Println(5, nil, "DNS not found")
+		logging.Println(5, "Handle-Pkt", "error decoding DNS:", err)
 		return
 	}
-	logging.Println(6, nil, "got DNS response")
+	//logging.Println(6, nil, "got DNS response", count)
 	if dns.ResponseCode == layers.DNSResponseCodeNotImp {
+		logging.Println(5, "Handle-Pkt", "DNS response code: not implemented")
 		return
 	}
 	if len(dns.Answers) == 0 {
 		//ignore empty replies
+		logging.Println(5, "Handle-Pkt", "DNS empty answers")
 		return
 	}
-	for _, answer := range dns.Answers {
-		if answer.Type == layers.DNSTypeHINFO {
+	if len(dns.Answers) == 1 {
+		if dns.Answers[0].Type == layers.DNSTypeHINFO {
+			logging.Println(6, "Handle-Pkt", "DNS reply is HINFO")
 			return
 		}
 	}
@@ -662,7 +665,7 @@ func (tester *Rate_tester) Handle_pkt(ip *layers.IPv4, pkt gopacket.Packet) {
 	rate_entry, ok := tester.active_resolvers[Active_key{port: uint16(udp.DstPort)}]
 	if !ok {
 		tester.resolver_mu.Unlock()
-		logging.Println(6, nil, "got DNS but cant find related resolver")
+		logging.Println(5, "Handle-Pkt", "got DNS but cant find related resolver")
 		return
 	}
 	subid := uint16(udp.DstPort) - rate_entry.outport
