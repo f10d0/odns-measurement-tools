@@ -634,7 +634,7 @@ func (tester *Rate_tester) send_packets(id int) {
 		}
 		tester.resolver_counter++
 		tester.resolver_mu.Unlock()
-		logging.Println(4, "Sender "+strconv.Itoa(id), "rate limit testing resolver", tester.resolver_counter, entry.resolver_ip, "on port", outport)
+		logging.Println(4, "Sender "+strconv.Itoa(id), "rate limit testing resolver", tester.resolver_counter, entry.resolver_ip)
 		// === start the rate limit testing to that target ===
 		tester.rate_test_target(id, entry)
 		tester.finished_resolvers <- entry

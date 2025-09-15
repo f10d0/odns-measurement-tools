@@ -83,6 +83,11 @@ func (sender *Udp_sender) Send_udp_pkt(ip layers.IPv4, udp layers.UDP, payload [
 		}
 
 		if err = sender.L3_Raw_con.WriteTo(ip_head, udp_buf.Bytes(), nil); err != nil {
+			logging.Println(1, "send packet", "failed to write packet:")
+			packet := append(ip_head_buf.Bytes(), udp_buf.Bytes()...)
+			packet[2] = byte(len(packet) >> 8)
+			packet[3] = byte(len(packet))
+			common.Print_hexdump(packet)
 			panic(err)
 		}
 	}

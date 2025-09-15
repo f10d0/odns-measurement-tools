@@ -96,3 +96,20 @@ func Std_dev(data []float64) float64 {
 	// standard deviation
 	return math.Sqrt(variance)
 }
+
+func Print_hexdump(data []byte) {
+	for i := 0; i < len(data); i += 16 {
+		end := i + 16
+		if end > len(data) {
+			end = len(data)
+		}
+		chunk := data[i:end]
+
+		// print offset + hex bytes
+		fmt.Printf("%06x  ", i)
+		for _, b := range chunk {
+			fmt.Printf("%02x ", b)
+		}
+		fmt.Println()
+	}
+}
